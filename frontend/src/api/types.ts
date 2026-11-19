@@ -314,6 +314,7 @@ export interface TrialResult {
   queries: TrialQueryResult[];
   baseDdl: string;
   candDdl: string;
+  alterDdl: string; // ALTER TABLE (or rebuild) statements for the production table; '' when nothing changes
   projectedBaseBytes: number;
   projectedCandBytes: number;
   verdict: string;

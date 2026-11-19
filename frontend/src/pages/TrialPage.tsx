@@ -372,6 +372,18 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
         </section>
       ) : null}
 
+      {r.alterDdl ? (
+        <section className="stack" style={vars({ gap: 12 })}>
+          <h2 className="subhead" style={{ overflowWrap: 'anywhere' }}>
+            Production · {trial.database}.{trial.table}
+          </h2>
+          <p className="body-sm muted">
+            The statements that bring the production table to the candidate's schema. Granulee does not run them.
+          </p>
+          <CodeBlock code={r.alterDdl} copyLabel="Copy SQL" />
+        </section>
+      ) : null}
+
       <section className="grid-auto" style={vars({ min: 420, gap: 24 })}>
         <div className="stack" style={vars({ gap: 12 })}>
           <h2 className="subhead" style={{ overflowWrap: 'anywhere' }}>

@@ -8,6 +8,8 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
   codecs, data types and skip indexes. Savings are estimates.
 - **Trials** build a baseline and a candidate table in a scratch database, copy the same sample of
   rows into both, merge them, and compare sizes, column scans, insert throughput and replayed queries.
+  The result also shows the statements that would apply the candidate to the production table:
+  `ALTER TABLE` for column, codec and index changes, a rebuild script when a key changes.
 
 ## Layout
 

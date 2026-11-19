@@ -1,0 +1,91 @@
+package io.granulee
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+class MigrationSqlTest {
+    private fun column(name: String, type: String, codec: String = "", key: Boolean = false) =
+        ColumnFacts(name, type, codec, 0, 0, "", "", key, false, null)
+
+    private val live = LiveTable(
+        engineFull = "ReplicatedMergeTree('/clickhouse/tables/{shard}/analytics/events', '{replica}') PARTITION BY toYYYYMM(event_time) " +
+            "ORDER BY (user_id, event_time) TTL event_time + toIntervalDay(90) SETTINGS index_granularity = 8192",
+        partitionKey = "toYYYYMM(event_time)",
+        sortingKey = "user_id, event_time",
+        primaryKey = "user_id, event_time",
+        indexGranularity = "8192",
+        rows = 1000,
+        compressedBytes = 1000,
+        columns = listOf(
+            column("user_id", "UInt64", key = true),
+            column("event_time", "DateTime", key = true),
+            column("country", "String"),
+            column("properties", "String", "CODEC(ZSTD(1))"),
+            column("referrer", "Nullable(String)", "CODEC(LZ4HC(9))"),
+        ),
+        indexes = listOf(IndexFacts("idx_country", "country", "set(100)", 4, 0, 0)),
+    )
+
+    private fun request(
+        partitionKey: String = live.partitionKey,
+        sortingKey: String = "(user_id, event_time)",
+        dropIndexes: List<String> = emptyList(),
+        vararg columns: TrialColumn,
+    ) = TrialRequest(
+        database = "analytics", table = "events", partitionKey = partitionKey, sortingKey = sortingKey, dropIndexes = dropIndexes,
+        columns = live.columns.map { c -> columns.firstOrNull { it.name == c.name } ?: TrialColumn(c.name, c.type, Types.codecBody(c.codec)) },
+    )
+
+    private fun sql(request: TrialRequest) = migrationSql("analytics", "events", live, request)
+
+    @Test
+    fun `an unchanged candidate needs no statements`() {
+        assertEquals("", sql(request()))
+    }
+
+    @Test
+    fun `column and index changes become ALTER TABLE statements`() {
+        val out = sql(
+            request(
+                dropIndexes = listOf("idx_country"),
+                columns = arrayOf(
+                    TrialColumn("country", "LowCardinality(String)", ""),
+                    TrialColumn("properties", "String", "ZSTD(3)"),
+                    TrialColumn("referrer", "String", ""),
+                ),
+            ),
+        )
+        assertFalse(out.contains("CREATE TABLE"))
+        assertTrue(out.contains("ALTER TABLE `analytics`.`events`\n    MODIFY COLUMN `country` LowCardinality(String),\n    MODIFY COLUMN `referrer` String;"), out)
+        assertTrue(out.contains("    MODIFY COLUMN `properties` CODEC(ZSTD(3)),\n    MODIFY COLUMN `referrer` REMOVE CODEC;"), out)
+        assertTrue(out.contains("    DROP INDEX `idx_country`;"), out)
+        assertTrue(out.contains("referrer loses Nullable"), out)
+    }
+
+    @Test
+    fun `a type and codec change on one column is a single MODIFY`() {
+        val out = sql(request(columns = arrayOf(TrialColumn("country", "LowCardinality(String)", "ZSTD(1)"))))
+        assertTrue(out.contains("MODIFY COLUMN `country` LowCardinality(String) CODEC(ZSTD(1));"), out)
+        assertEquals(1, Regex("ALTER TABLE").findAll(out).count())
+    }
+
+    @Test
+    fun `a new sorting key is a rebuild that keeps engine, TTL and settings`() {
+        val out = sql(request(sortingKey = "event_time, user_id", columns = arrayOf(TrialColumn("country", "LowCardinality(String)", ""))))
+        assertFalse(out.contains("ALTER TABLE `"), out)
+        assertTrue(out.contains("the sorting key changes"), out)
+        assertTrue(out.contains("CREATE TABLE `analytics`.`events_new`"), out)
+        assertTrue(out.contains("ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/analytics/events', '{replica}')\nPARTITION BY toYYYYMM(event_time)\nORDER BY (event_time, user_id)\nTTL event_time + toIntervalDay(90)\nSETTINGS index_granularity = 8192;"), out)
+        assertTrue(out.contains("CAST(`country` AS LowCardinality(String)) AS `country`"), out)
+        assertTrue(out.contains("EXCHANGE TABLES `analytics`.`events` AND `analytics`.`events_new`;"), out)
+    }
+
+    @Test
+    fun `a key column that changes type is a rebuild`() {
+        val out = sql(request(columns = arrayOf(TrialColumn("user_id", "UInt32", ""))))
+        assertTrue(out.contains("user_id is a key column and changes its type"), out)
+        assertTrue(out.contains("CREATE TABLE"), out)
+    }
+}

@@ -25,7 +25,8 @@ data class TrialFile(val trials: List<Trial> = emptyList())
 private class TrialCancelled : RuntimeException("Cancelled")
 
 /** What a trial reads about the production table right before it starts. */
-private data class LiveTable(
+internal data class LiveTable(
+    val engineFull: String,
     val partitionKey: String,
     val sortingKey: String,
     val primaryKey: String,
@@ -60,6 +61,121 @@ fun normalizeKey(key: String): String {
 }
 
 private fun sameText(a: String, b: String) = a.replace(Regex("\\s+"), "") == b.replace(Regex("\\s+"), "")
+
+/** CREATE TABLE with the production columns, and the request's changes if given. */
+internal fun createSql(target: String, live: LiveTable, request: TrialRequest?, engine: String, tail: String): String {
+    val overrides = request?.columns?.associateBy { it.name }.orEmpty()
+    val columns = live.columns.map { c ->
+        val o = overrides[c.name]
+        val type = o?.type?.ifBlank { null } ?: c.type
+        val codec = if (o != null) o.codec.trim() else Types.codecBody(c.codec)
+        buildString {
+            append("    ${Sql.id(c.name)} $type")
+            if (c.defaultKind.isNotEmpty()) append(" ${c.defaultKind} ${c.defaultExpression}")
+            if (codec.isNotEmpty() && c.defaultKind != "ALIAS") append(" CODEC($codec)")
+        }
+    }
+    val indexes = live.indexes.filter { request == null || it.name !in request.dropIndexes }
+        .map { "    INDEX ${Sql.id(it.name)} ${it.expression} TYPE ${it.type} GRANULARITY ${it.granularity}" }
+    val partitionKey = request?.partitionKey ?: live.partitionKey
+    val sortingKey = normalizeKey(request?.sortingKey ?: live.sortingKey)
+    return buildString {
+        append("CREATE TABLE $target\n(\n")
+        append((columns + indexes).joinToString(",\n"))
+        append("\n)\nENGINE = $engine\n")
+        if (partitionKey.isNotBlank()) append("PARTITION BY $partitionKey\n")
+        if (live.primaryKey.isNotBlank() && !sameText(live.primaryKey, live.sortingKey) && sameText(sortingKey, normalizeKey(live.sortingKey))) {
+            append("PRIMARY KEY (${live.primaryKey})\n")
+        }
+        append("ORDER BY (${sortingKey.ifBlank { "tuple()" }})")
+        if (tail.isNotBlank()) append("\n$tail")
+    }
+}
+
+/** A trial table: plain MergeTree. Wide parts only, because compact parts keep all columns in one file and per-column sizes would read as zero. */
+private fun trialSql(target: String, live: LiveTable, request: TrialRequest?): String = createSql(
+    target, live, request, "MergeTree",
+    "SETTINGS min_bytes_for_wide_part = 0, min_rows_for_wide_part = 0" + (live.indexGranularity?.let { ", index_granularity = $it" } ?: ""),
+)
+
+/** How a copied column is read when the candidate gives it another type. */
+private fun copyExpression(c: ColumnFacts, newType: String?): String = when {
+    newType == null || sameText(newType, c.type) -> Sql.id(c.name)
+    Types.isNullable(c.type) && !Types.isNullable(newType) ->
+        "CAST(ifNull(${Sql.id(c.name)}, defaultValueOfTypeName(${Sql.lit(Types.base(c.type))})) AS $newType) AS ${Sql.id(c.name)}"
+    else -> "CAST(${Sql.id(c.name)} AS $newType) AS ${Sql.id(c.name)}"
+}
+
+/**
+ * The statements that bring the production table to the candidate's schema: ALTER TABLE where ClickHouse
+ * can change the table in place, a rebuild script where it cannot. Empty when the candidate changes nothing.
+ */
+internal fun migrationSql(database: String, table: String, live: LiveTable, request: TrialRequest): String {
+    val name = Sql.table(database, table)
+    val overrides = request.columns.associateBy { it.name }
+    // type / codec are null where the candidate keeps what production has
+    val changes = live.columns.mapNotNull { c ->
+        val o = overrides[c.name] ?: return@mapNotNull null
+        val type = o.type.ifBlank { c.type }.takeIf { !sameText(it, c.type) }
+        val codec = o.codec.trim().takeIf { !sameText(it, Types.codecBody(c.codec)) }
+        if (type == null && codec == null) null else Triple(c, type, codec)
+    }
+    val dropped = live.indexes.filter { it.name in request.dropIndexes }
+
+    val rebuild = buildList {
+        if (!sameText(request.partitionKey, live.partitionKey)) add("the partition key changes")
+        if (!sameText(normalizeKey(request.sortingKey), normalizeKey(live.sortingKey))) add("the sorting key changes")
+        changes.filter { (c, type, _) -> type != null && (c.inSortingKey || c.inPartitionKey) }
+            .forEach { (c, _, _) -> add("${c.name} is a key column and changes its type") }
+    }
+    if (rebuild.isNotEmpty()) {
+        val fresh = Sql.table(database, table + "_new")
+        val copied = live.columns.filter { it.defaultKind.isEmpty() || it.defaultKind == "DEFAULT" }
+        val engine = Analyzer.engineClause(live.engineFull).ifBlank { "MergeTree" }
+        return buildString {
+            append("-- ALTER TABLE cannot do this in place: ${rebuild.joinToString(", ")}.\n")
+            append("-- The table is rebuilt instead. Pause writes while the rows are copied, or backfill them afterwards.\n")
+            if (engine.startsWith("Replicated")) append("-- Replicated table: give the new table its own ZooKeeper path.\n")
+            append(createSql(fresh, live, request, engine, Analyzer.engineTail(live.engineFull)))
+            append(";\n\nINSERT INTO $fresh (${copied.joinToString(", ") { Sql.id(it.name) }})\nSELECT ")
+            append(copied.joinToString(", ") { copyExpression(it, overrides[it.name]?.type?.ifBlank { null }) })
+            append("\nFROM $name;\n\nEXCHANGE TABLES $name AND $fresh;\n\n")
+            append("-- $fresh now holds the old data. Drop it once the new table is verified:\n")
+            append("-- DROP TABLE $fresh;")
+        }
+    }
+
+    fun alter(comment: String, actions: List<String>) =
+        "-- $comment\nALTER TABLE $name\n" + actions.joinToString(",\n") { "    $it" } + ";"
+
+    val blocks = mutableListOf<String>()
+    val types = changes.filter { it.second != null }
+    if (types.isNotEmpty()) {
+        val notes = types.filter { (c, type, _) -> Types.isNullable(c.type) && !Types.isNullable(type!!) }
+            .joinToString("") { (c, _, _) -> "\n-- ${c.name} loses Nullable: the ALTER fails while the column still holds NULLs." }
+        blocks.add(
+            alter(
+                "Type changes run as a mutation that rewrites the column in every part. Progress is in system.mutations.$notes",
+                types.map { (c, type, codec) -> "MODIFY COLUMN ${Sql.id(c.name)} $type" + if (codec.isNullOrEmpty()) "" else " CODEC($codec)" },
+            ),
+        )
+    }
+    // A codec that only changes, and a codec that is removed next to a type change.
+    val codecs = changes.filter { (_, type, codec) -> codec != null && (type == null || codec.isEmpty()) }
+    if (codecs.isNotEmpty()) {
+        blocks.add(
+            alter(
+                "Codec changes only touch metadata. Existing parts keep the old codec until they are merged;\n" +
+                    "-- OPTIMIZE TABLE $name FINAL rewrites them right away.",
+                codecs.map { (c, _, codec) -> "MODIFY COLUMN ${Sql.id(c.name)} " + if (codec!!.isEmpty()) "REMOVE CODEC" else "CODEC($codec)" },
+            ),
+        )
+    }
+    if (dropped.isNotEmpty()) {
+        blocks.add(alter("Skip indexes the candidate leaves out.", dropped.map { "DROP INDEX ${Sql.id(it.name)}" }))
+    }
+    return blocks.joinToString("\n\n")
+}
 
 private fun median(values: List<Double>): Double? {
     if (values.isEmpty()) return null
@@ -337,8 +453,9 @@ class TrialService(
             ).count { it }
             update(id) { it.copy(changedKeys = changedKeys, changedColumns = changedColumns.size) }
 
-            val baseDdl = ddl(base, live, null)
-            val candDdl = ddl(cand, live, request)
+            val baseDdl = trialSql(base, live, null)
+            val candDdl = trialSql(cand, live, request)
+            val alterDdl = migrationSql(trial.database, trial.table, live, request)
             runCatching { conn.exec("CREATE DATABASE IF NOT EXISTS ${Sql.id(trial.scratchDatabase)}") }
             exec(baseDdl)
             exec(candDdl)
@@ -357,15 +474,7 @@ class TrialService(
 
             // 3. candidate copy
             enter(++step, 38)
-            val expressions = copied.joinToString(", ") { c ->
-                val newType = overrides[c.name]?.type?.ifBlank { null }
-                when {
-                    newType == null || sameText(newType, c.type) -> Sql.id(c.name)
-                    Types.isNullable(c.type) && !Types.isNullable(newType) ->
-                        "CAST(ifNull(${Sql.id(c.name)}, defaultValueOfTypeName(${Sql.lit(Types.base(c.type))})) AS $newType) AS ${Sql.id(c.name)}"
-                    else -> "CAST(${Sql.id(c.name)} AS $newType) AS ${Sql.id(c.name)}"
-                }
-            }
+            val expressions = copied.joinToString(", ") { copyExpression(it, overrides[it.name]?.type?.ifBlank { null }) }
             val candCopy = exec("INSERT INTO $cand ($columnList) SELECT $expressions FROM $base", insertSettings)
             say("Copied the same rows from the baseline into the candidate (${seconds(candCopy.elapsedMs)}), so both hold identical data")
 
@@ -373,7 +482,7 @@ class TrialService(
             if (request.measureInserts) {
                 progress(52)
                 val twin = Sql.table(trial.scratchDatabase, trial.baseTable + "_ins")
-                exec(ddl(twin, live, null))
+                exec(trialSql(twin, live, null))
                 baseInsertMs = exec("INSERT INTO $twin ($columnList) SELECT $columnList FROM $base", insertSettings).elapsedMs
                 exec("DROP TABLE IF EXISTS $twin SYNC")
                 say("Timed the same insert into a second baseline table (${seconds(baseInsertMs)}) to compare insert throughput")
@@ -443,7 +552,7 @@ class TrialService(
 
             // result
             val result = buildResult(
-                request, live, changedColumns, overrides, baseSizes, candSizes, scanTimes, queryResults, baseDdl, candDdl,
+                request, live, changedColumns, overrides, baseSizes, candSizes, scanTimes, queryResults, baseDdl, candDdl, alterDdl,
                 baseInsertMs, candCopy.elapsedMs, baseMergeMs, candMergeMs,
             )
             update(id) {
@@ -513,6 +622,7 @@ class TrialService(
             "SELECT name, expr, type_full, toInt64(granularity) AS granularity FROM system.data_skipping_indices WHERE $where ORDER BY name",
         ).map { IndexFacts(it.str("name"), it.str("expr"), it.str("type_full"), it.long("granularity"), 0, 0) }
         return LiveTable(
+            engineFull = meta.str("engine_full"),
             partitionKey = meta.str("partition_key"),
             sortingKey = meta.str("sorting_key"),
             primaryKey = meta.str("primary_key"),
@@ -522,38 +632,6 @@ class TrialService(
             columns = columns,
             indexes = indexes,
         )
-    }
-
-    /** CREATE TABLE for a trial table: plain MergeTree, the production columns, and the request's changes if given. */
-    private fun ddl(target: String, live: LiveTable, request: TrialRequest?): String {
-        val overrides = request?.columns?.associateBy { it.name }.orEmpty()
-        val columns = live.columns.map { c ->
-            val o = overrides[c.name]
-            val type = o?.type?.ifBlank { null } ?: c.type
-            val codec = if (o != null) o.codec.trim() else Types.codecBody(c.codec)
-            buildString {
-                append("    ${Sql.id(c.name)} $type")
-                if (c.defaultKind.isNotEmpty()) append(" ${c.defaultKind} ${c.defaultExpression}")
-                if (codec.isNotEmpty() && c.defaultKind != "ALIAS") append(" CODEC($codec)")
-            }
-        }
-        val indexes = live.indexes.filter { request == null || it.name !in request.dropIndexes }
-            .map { "    INDEX ${Sql.id(it.name)} ${it.expression} TYPE ${it.type} GRANULARITY ${it.granularity}" }
-        val partitionKey = request?.partitionKey ?: live.partitionKey
-        val sortingKey = request?.sortingKey ?: live.sortingKey
-        return buildString {
-            append("CREATE TABLE $target\n(\n")
-            append((columns + indexes).joinToString(",\n"))
-            append("\n)\nENGINE = MergeTree\n")
-            if (partitionKey.isNotBlank()) append("PARTITION BY $partitionKey\n")
-            if (live.primaryKey.isNotBlank() && !sameText(live.primaryKey, live.sortingKey) && sameText(sortingKey, live.sortingKey)) {
-                append("PRIMARY KEY (${live.primaryKey})\n")
-            }
-            append("ORDER BY (${sortingKey.ifBlank { "tuple()" }})")
-            // Wide parts only: compact parts keep all columns in one file, so per-column sizes would read as zero.
-            append("\nSETTINGS min_bytes_for_wide_part = 0, min_rows_for_wide_part = 0")
-            if (live.indexGranularity != null) append(", index_granularity = ${live.indexGranularity}")
-        }
     }
 
     private fun sampleFilter(ch: ChConnection, trial: Trial, live: LiveTable): String {
@@ -608,6 +686,7 @@ class TrialService(
         queries: List<TrialQueryResult>,
         baseDdl: String,
         candDdl: String,
+        alterDdl: String,
         baseInsertMs: Double?,
         candInsertMs: Double,
         baseMergeMs: Double?,
@@ -668,6 +747,7 @@ class TrialService(
             queries = queries,
             baseDdl = baseDdl,
             candDdl = candDdl,
+            alterDdl = alterDdl,
             projectedBaseBytes = live.compressedBytes,
             projectedCandBytes = (live.compressedBytes * factor).toLong(),
             verdict = verdict(factor, timed),

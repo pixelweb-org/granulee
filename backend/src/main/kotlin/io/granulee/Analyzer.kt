@@ -152,22 +152,37 @@ object Analyzer {
     }
 
     /** The engine clause of engine_full: everything before the first key or settings clause. */
-    fun engineClause(t: TableFacts): String {
-        val full = t.engineFull.ifBlank { t.engine }
+    fun engineClause(t: TableFacts): String = engineClause(t.engineFull.ifBlank { t.engine })
+
+    fun engineClause(full: String): String = clauseStart(full, CLAUSES)?.let { full.substring(0, it) } ?: full
+
+    /** What follows ORDER BY in engine_full: SAMPLE BY, TTL and SETTINGS, one clause per line. */
+    fun engineTail(full: String): String {
+        val parts = mutableListOf<String>()
+        var rest = clauseStart(full, TAIL_CLAUSES)?.let { full.substring(it + 1) } ?: return ""
+        while (true) {
+            val next = clauseStart(rest, TAIL_CLAUSES) ?: break
+            parts.add(rest.substring(0, next))
+            rest = rest.substring(next + 1)
+        }
+        return (parts + rest).joinToString("\n")
+    }
+
+    /** Index of the space in front of the first of these clauses that is not inside parentheses. */
+    private fun clauseStart(full: String, clauses: List<String>): Int? {
         var depth = 0
-        var i = 0
-        while (i < full.length) {
+        for (i in full.indices) {
             when (full[i]) {
                 '(' -> depth++
                 ')' -> depth--
-                ' ' -> if (depth == 0 && CLAUSES.any { full.startsWith(it, i + 1) }) return full.substring(0, i)
+                ' ' -> if (depth == 0 && i > 0 && clauses.any { full.startsWith(it, i + 1) }) return i
             }
-            i++
         }
-        return full
+        return null
     }
 
     private val CLAUSES = listOf("PARTITION BY ", "PRIMARY KEY ", "ORDER BY ", "SAMPLE BY ", "TTL ", "SETTINGS ")
+    private val TAIL_CLAUSES = listOf("SAMPLE BY ", "TTL ", "SETTINGS ")
 
     private fun rebuildSql(t: TableFacts, partitionKey: String, sortingKey: String, note: String): String {
         val name = Sql.table(t.database, t.name)

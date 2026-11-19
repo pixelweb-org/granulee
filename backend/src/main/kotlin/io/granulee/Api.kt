@@ -306,6 +306,8 @@ data class TrialResult(
     val projectedBaseBytes: Long,
     val projectedCandBytes: Long,
     val verdict: String,
+    /** Statements that apply the candidate to the production table; empty when nothing changes or for trials run before this existed. */
+    val alterDdl: String = "",
 )
 
 data class LogLine(val at: String, val message: String)
