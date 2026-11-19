@@ -76,7 +76,11 @@ internal fun createSql(target: String, live: LiveTable, request: TrialRequest?, 
         }
     }
     val indexes = live.indexes.filter { request == null || it.name !in request.dropIndexes }
-        .map { "    INDEX ${Sql.id(it.name)} ${it.expression} TYPE ${it.type} GRANULARITY ${it.granularity}" }
+        .map {
+            // system.data_skipping_indices lists an index over several expressions as "a, b"; DDL wants "(a, b)".
+            val expression = if (splitTopLevel(it.expression).size > 1) "(${it.expression})" else it.expression
+            "    INDEX ${Sql.id(it.name)} $expression TYPE ${it.type} GRANULARITY ${it.granularity}"
+        }
     val partitionKey = request?.partitionKey ?: live.partitionKey
     val sortingKey = normalizeKey(request?.sortingKey ?: live.sortingKey)
     return buildString {

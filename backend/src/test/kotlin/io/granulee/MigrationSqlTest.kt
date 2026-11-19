@@ -88,4 +88,12 @@ class MigrationSqlTest {
         assertTrue(out.contains("user_id is a key column and changes its type"), out)
         assertTrue(out.contains("CREATE TABLE"), out)
     }
+
+    @Test
+    fun `an index over several expressions keeps its parentheses`() {
+        val table = live.copy(indexes = listOf(IndexFacts("idx_pos", "lat, lon", "set(100)", 2, 0, 0), IndexFacts("idx_fn", "lower(country)", "set(100)", 2, 0, 0)))
+        val out = createSql("`scratch`.`t`", table, null, "MergeTree", "")
+        assertTrue(out.contains("INDEX `idx_pos` (lat, lon) TYPE set(100) GRANULARITY 2"), out)
+        assertTrue(out.contains("INDEX `idx_fn` lower(country) TYPE set(100) GRANULARITY 2"), out)
+    }
 }
