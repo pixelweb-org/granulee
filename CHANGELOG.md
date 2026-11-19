@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/pixelweb-org/granulee/compare/v0.3.0...v0.3.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* copy JSON tables into compact parts and merge them wide once ([3ff0b31](https://github.com/pixelweb-org/granulee/commit/3ff0b314b46e83e7a9e58446b403796c74e78eba))
+
 ## [0.3.0](https://github.com/pixelweb-org/granulee/compare/v0.2.3...v0.3.0) (2026-11-19)
 
 
