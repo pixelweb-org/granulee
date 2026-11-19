@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/pixelweb-org/granulee/compare/v0.2.2...v0.2.3) (2026-11-19)
+
+
+### Bug Fixes
+
+* run trials on JSON, Dynamic and Variant tables with few threads ([df0fc93](https://github.com/pixelweb-org/granulee/commit/df0fc9340b7388d37ec1f71b5282168186ba2336))
+
 ## [0.2.2](https://github.com/pixelweb-org/granulee/compare/v0.2.1...v0.2.2) (2026-11-19)
 
 
