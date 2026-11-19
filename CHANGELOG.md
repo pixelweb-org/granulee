@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/pixelweb-org/granulee/compare/v0.2.0...v0.2.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* keep parentheses on skip indexes over several expressions ([874426a](https://github.com/pixelweb-org/granulee/commit/874426a540dd2d0b48e721400b9990b705129136))
+
 ## [0.2.0](https://github.com/pixelweb-org/granulee/compare/v0.1.0...v0.2.0) (2026-11-19)
 
 
