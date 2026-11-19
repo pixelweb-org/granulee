@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/pixelweb-org/granulee/compare/v0.2.3...v0.3.0) (2026-11-19)
+
+
+### Features
+
+* pick codec, compression and level per column in the trial setup ([5b826cf](https://github.com/pixelweb-org/granulee/commit/5b826cf576222fa6f882b439dbd2067267dfe896))
+* review and run a trial's ALTER statements from Apply to production ([11295e3](https://github.com/pixelweb-org/granulee/commit/11295e333e25ed3c7b229d3f787732d1932dd8b6))
+
 ## [0.2.3](https://github.com/pixelweb-org/granulee/compare/v0.2.2...v0.2.3) (2026-11-19)
 
 
