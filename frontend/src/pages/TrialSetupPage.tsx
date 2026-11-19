@@ -12,9 +12,31 @@ import { StatusDot } from '../components/StatusDot';
 import { fmtBytes, fmtInt, fmtRows } from '../lib/format';
 import { routes } from '../lib/routes';
 import { vars } from '../lib/style';
+import { COMPRESSORS, ENCODINGS, buildCodec, levelsOf, parseCodec, standardLevel, type CodecParts, type Compressor } from '../lib/codec';
 
-const DEFAULT_CODEC = 'LZ4 (default)';
-const codecLabel = (c: string) => (c === '' ? DEFAULT_CODEC : c);
+const normalEncoding = (text: string) => text.trim().replace(/,\s*$/, '');
+
+/** The codec in front of the compressor, typed freely. Keeps what is being typed ("Delta, ") while the schema holds the clean value. */
+function EncodingInput({ label, value, onChange }: { label: string; value: string; onChange: (encoding: string) => void }) {
+  const [text, setText] = useState(value);
+  // The schema changed from outside (a recommendation was ticked): show that instead of the draft.
+  const shown = normalEncoding(text) === value ? text : value;
+  return (
+    <input
+      className="nv-input cell g-mono"
+      aria-label={label}
+      list="codec-encodings"
+      placeholder="none"
+      spellCheck={false}
+      autoComplete="off"
+      value={shown}
+      onChange={(e) => {
+        setText(e.target.value);
+        onChange(normalEncoding(e.target.value));
+      }}
+    />
+  );
+}
 /** The plan's baseline codec is display-ready; "" stands for the server default in requests. */
 const baselineCodec = (c: TrialPlanColumn) => (/default/i.test(c.baselineCodec) ? '' : c.baselineCodec);
 
@@ -221,7 +243,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
 
         <Card as="section">
           <StepHead step="Step 2" title="Candidate schema">
-            Set any type or codec per column, recommended or not. Changed rows are marked.
+            Set type, codec, compression and level per column, recommended or not. The codec takes parameters and chains, such as Delta(4) or Delta, T64. Changed columns carry a dot.
           </StepHead>
           <div className="grid-2" style={vars({ gap: 16 })}>
             <TextInput
@@ -238,16 +260,14 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
             />
           </div>
           <div style={{ overflowX: 'auto' }}>
-            <table className="g-tbl">
+            <table className="g-tbl dense">
               <thead>
                 <tr>
-                  <th>Column</th>
-                  <th>Baseline</th>
-                  <th>Candidate type</th>
-                  <th>Candidate codec</th>
-                  <th>
-                    <span className="sr-only">Changed</span>
-                  </th>
+                  <th>Column · baseline</th>
+                  <th>Type</th>
+                  <th>Codec</th>
+                  <th>Compression</th>
+                  <th>Level</th>
                 </tr>
               </thead>
               <tbody>
@@ -255,15 +275,28 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
                   const cur = schema.cols[c.name];
                   const changed = changedCols.includes(c.name);
                   const types = c.typeOptions.includes(cur.type) ? c.typeOptions : [cur.type, ...c.typeOptions];
-                  const codecs = c.codecOptions.includes(cur.codec) ? c.codecOptions : [cur.codec, ...c.codecOptions];
+                  const codec = parseCodec(cur.codec);
+                  const levels = levelsOf(codec.compressor);
+                  // A level the server accepts but the list lacks (LZ4HC(0)) stays selectable.
+                  const levelOptions = codec.level != null && !levels.includes(codec.level) ? [codec.level, ...levels] : levels;
+                  const setCodec = (patch: Partial<CodecParts>) => setCol(c.name, { codec: buildCodec({ ...codec, ...patch }) });
                   return (
                     <tr key={c.name} className={changed ? 'is-changed' : undefined}>
-                      <td className="g-strong">{c.name}</td>
-                      <td className="g-mono">
-                        {c.baselineType} · {c.baselineCodec}
+                      <td>
+                        <div className="row ink" style={vars({ gap: 6 })}>
+                          <strong style={{ overflowWrap: 'anywhere' }}>{c.name}</strong>
+                          {changed ? (
+                            <span className="dot dot-success" title="Changed">
+                              <span className="sr-only">Changed</span>
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="g-mono cell-sub">
+                          {c.baselineType} · {c.baselineCodec}
+                        </div>
                       </td>
-                      <td style={{ minWidth: 200 }}>
-                        <select className="g-select sm" aria-label={`Type for ${c.name}`} value={cur.type} onChange={(e) => setCol(c.name, { type: e.target.value })}>
+                      <td style={{ minWidth: 150 }}>
+                        <select className="g-select cell" aria-label={`Type for ${c.name}`} value={cur.type} onChange={(e) => setCol(c.name, { type: e.target.value })}>
                           {types.map((t) => (
                             <option key={t} value={t}>
                               {t}
@@ -271,21 +304,52 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
                           ))}
                         </select>
                       </td>
-                      <td style={{ minWidth: 180 }}>
-                        <select className="g-select sm" aria-label={`Codec for ${c.name}`} value={cur.codec} onChange={(e) => setCol(c.name, { codec: e.target.value })}>
-                          {codecs.map((t) => (
-                            <option key={t} value={t}>
-                              {codecLabel(t)}
+                      <td style={{ minWidth: 120 }}>
+                        <EncodingInput label={`Codec for ${c.name}`} value={codec.encoding} onChange={(encoding) => setCodec({ encoding })} />
+                      </td>
+                      <td style={{ minWidth: 92 }}>
+                        <select
+                          className="g-select cell"
+                          aria-label={`Compression for ${c.name}`}
+                          value={codec.compressor}
+                          onChange={(e) => {
+                            const compressor = e.target.value as Compressor;
+                            setCodec({ compressor, level: standardLevel(compressor) });
+                          }}
+                        >
+                          {COMPRESSORS.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
                             </option>
                           ))}
                         </select>
                       </td>
-                      <td className="caption ink">{changed ? 'Changed' : ''}</td>
+                      <td style={{ minWidth: 64 }}>
+                        <select
+                          className="g-select cell g-num"
+                          aria-label={`Compression level for ${c.name}`}
+                          disabled={!levelOptions.length}
+                          value={codec.level ?? ''}
+                          onChange={(e) => setCodec({ level: Number(e.target.value) })}
+                        >
+                          {levelOptions.length ? null : <option value="">—</option>}
+                          {levelOptions.map((l) => (
+                            <option key={l} value={l}>
+                              {l}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+            <datalist id="codec-encodings">
+              {ENCODINGS.map((e) => (
+                <option key={e} value={e} />
+              ))}
+            </datalist>
           </div>
           {plan.indexes.length ? (
             <div className="grid-auto" style={vars({ min: 300, gap: '4px 24px' })}>
