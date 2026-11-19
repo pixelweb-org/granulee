@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: granulee
+server:
+  port: 8080
+granulee:
+  # Sources, scan snapshots and trials are kept as JSON files here.
+  data-dir: ${GRANULEE_DATA_DIR:./data}
+  # Base64 of 32 random bytes. Empty: a key file is created inside the data dir.
+  secret-key: ${GRANULEE_SECRET_KEY:}
+logging:
+  level:
+    com.clickhouse: warn
