@@ -1,6 +1,8 @@
 package io.granulee
 
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.ObjectProvider
+import org.springframework.boot.info.BuildProperties
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.http.converter.HttpMessageNotReadableException
@@ -8,6 +10,7 @@ import org.springframework.stereotype.Controller
 import org.springframework.web.bind.MissingServletRequestParameterException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.bind.annotation.RestControllerAdvice
 
 /** Every API error is `{ "message": … }` with a fitting status. */
@@ -40,4 +43,13 @@ class ApiErrors {
 class SpaController {
     @GetMapping("/explorer/**", "/tables/**", "/recommendations/**", "/trials/**", "/sources")
     fun spa(): String = "forward:/index.html"
+}
+
+/** For container health checks, and to see which release is running. */
+@RestController
+class HealthController(build: ObjectProvider<BuildProperties>) {
+    private val version = build.ifAvailable?.version ?: "dev"
+
+    @GetMapping("/api/health")
+    fun health(): Map<String, String> = mapOf("status" to "UP", "version" to version)
 }

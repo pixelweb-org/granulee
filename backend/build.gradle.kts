@@ -3,10 +3,17 @@ plugins {
     kotlin("plugin.spring") version "2.4.21"
     id("org.springframework.boot") version "4.1.2"
     id("io.spring.dependency-management") version "1.1.7"
+    id("com.google.cloud.tools.jib") version "3.5.4"
 }
 
 group = "io.granulee"
-version = "0.1.0"
+// release-please bumps ../version.txt on every release.
+version = file("../version.txt").readText().trim()
+
+// Puts the version on the classpath (META-INF/build-info.properties) for /api/health.
+springBoot {
+    buildInfo()
+}
 
 kotlin {
     jvmToolchain(21)
@@ -47,5 +54,32 @@ if (project.hasProperty("withFrontend")) {
     tasks.named<ProcessResources>("processResources") {
         dependsOn(buildFrontend)
         from(frontendDir.dir("dist")) { into("static") }
+    }
+}
+
+// Container image, with the frontend inside when built with -PwithFrontend.
+// `./gradlew jibDockerBuild -PwithFrontend` loads it into the local Docker daemon as granulee:latest;
+// `./gradlew jib -PwithFrontend -Djib.to.image=registry.example.com/granulee` pushes it, logging in with
+// REGISTRY_USERNAME / REGISTRY_PASSWORD when set. Tags: -Djib.to.tags=a,b. A plain-HTTP registry also
+// needs -Djib.allowInsecureRegistries=true -DsendCredentialsOverHttp=true.
+jib {
+    from {
+        image = "eclipse-temurin:21-jre"
+    }
+    to {
+        image = "granulee"
+        tags = setOf("latest")
+        auth {
+            username = System.getenv("REGISTRY_USERNAME")
+            password = System.getenv("REGISTRY_PASSWORD")
+        }
+    }
+    container {
+        mainClass = "io.granulee.GranuleeApplicationKt"
+        ports = listOf("8080")
+        volumes = listOf("/data")
+        environment = mapOf("GRANULEE_DATA_DIR" to "/data")
+        jvmFlags = listOf("-XX:MaxRAMPercentage=75")
+        creationTime = "USE_CURRENT_TIMESTAMP"
     }
 }

@@ -1,0 +1,81 @@
+name: Build image
+
+# Tests every push to main. On a vX.Y.Z tag (release-please dispatches this workflow for each release)
+# it also builds the image with Jib and pushes it to the registry.
+on:
+  push:
+    branches: [main]
+    paths-ignore: [CHANGELOG.md, version.txt, .release-please-manifest.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: [self-hosted, Linux]
+    env:
+      # e.g. 192.168.3.88:18082/granulee, set as the repository variable IMAGE_REPOSITORY
+      IMAGE: ${{ vars.IMAGE_REPOSITORY }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # -PwithFrontend runs npm ci and the Vite build, and puts the result into the jar's static files.
+      - name: Test and build
+        working-directory: backend
+        run: ./gradlew build -PwithFrontend
+
+      # NEXUS_USERNAME / NEXUS_PASSWORD come from the runner's environment.
+      - name: Check registry credentials
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          [ -n "$IMAGE" ] || { echo "::error::Set the repository variable IMAGE_REPOSITORY"; exit 1; }
+          missing=""
+          [ -n "${NEXUS_USERNAME:-}" ] || missing="$missing NEXUS_USERNAME"
+          [ -n "${NEXUS_PASSWORD:-}" ] || missing="$missing NEXUS_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Not set in the runner environment:$missing"
+            exit 1
+          fi
+          status=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" "http://${IMAGE%%/*}/v2/")
+          if [ "$status" != "200" ]; then
+            echo "::error::Nexus rejected the login for $NEXUS_USERNAME (HTTP $status)"
+            exit 1
+          fi
+          echo "Logged in to ${IMAGE%%/*} as $NEXUS_USERNAME"
+
+      # The registry is plain HTTP, so Jib must be allowed to send credentials over it.
+      - name: Build and push image
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: backend
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          tags="latest,${GITHUB_REF_NAME#v},${short_sha}"
+          REGISTRY_USERNAME="$NEXUS_USERNAME" REGISTRY_PASSWORD="$NEXUS_PASSWORD" ./gradlew jib -PwithFrontend --stacktrace \
+            -Djib.console=plain \
+            -Djib.to.image="$IMAGE" \
+            -Djib.allowInsecureRegistries=true \
+            -DsendCredentialsOverHttp=true \
+            -Djib.to.tags="$tags"
+          {
+            echo "### Image pushed"
+            echo ""
+            for t in ${tags//,/ }; do echo "- \`$IMAGE:$t\`"; done
+          } >> "$GITHUB_STEP_SUMMARY"

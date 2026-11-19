@@ -76,3 +76,21 @@ GRANT CREATE TABLE, DROP TABLE, INSERT, SELECT, OPTIMIZE ON scratch.* TO granule
   `estimates.cardinality` in `system.parts_columns`.
 - Skip-index usage is not in system tables, so index findings are "review" items by size.
 - Trial tables are plain `MergeTree` with wide parts, whatever the production engine is.
+
+## Releases
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org). On every push to `main`,
+[release-please](https://github.com/googleapis/release-please) keeps a release PR open that collects them
+and bumps `version.txt` and `CHANGELOG.md`. Merging that PR tags `vX.Y.Z`, creates the GitHub release and
+starts the image build: Jib builds the image with the frontend inside and pushes it to the registry in the
+repository variable `IMAGE_REPOSITORY`, tagged `latest`, the version and the short commit. Both workflows
+run on the self-hosted runner, which has `NEXUS_USERNAME` / `NEXUS_PASSWORD` in its environment.
+
+```sh
+cd backend
+./gradlew jibDockerBuild -PwithFrontend   # granulee:latest in the local Docker daemon
+docker run -p 8080:8080 -v granulee-data:/data granulee:latest
+```
+
+`deploy/compose.server.yaml` is the stack that runs it on the server. `GET /api/health` answers with the
+running version.

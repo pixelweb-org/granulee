@@ -1,0 +1,46 @@
+name: Release Please
+
+# release-please keeps a release PR open that collects the conventional commits since the last release.
+# Merging it makes release-please tag the version and create the GitHub release. Anything done with
+# GITHUB_TOKEN never triggers other workflows (workflow_dispatch is the exception), so the image build
+# for the new tag is started explicitly.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: [self-hosted, Linux]
+    steps:
+      - name: Release or update the release PR
+        id: release
+        uses: googleapis/release-please-action@v5
+
+      - name: Start the image build
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          gh workflow run image.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "### Released $TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      # The pr output is empty or not JSON on some runs, so it is read in the shell rather than with fromJSON.
+      - name: Point to the release PR
+        env:
+          PR_JSON: ${{ steps.release.outputs.pr }}
+        run: |
+          pr=$(printf '%s' "$PR_JSON" | grep -o '"number": *[0-9]*' | head -n 1 | tr -dc '0-9')
+          [ -n "$pr" ] || exit 0
+          echo "### Release PR: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/pull/$pr" >> "$GITHUB_STEP_SUMMARY"
+          echo "Merge it to release." >> "$GITHUB_STEP_SUMMARY"
