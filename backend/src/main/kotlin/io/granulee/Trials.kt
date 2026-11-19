@@ -658,7 +658,9 @@ class TrialService(
             }
             else -> {
                 val every = if (request.rows > 0) live.rows / request.rows else 0
-                if (every >= 2) " WHERE rand() % $every = 0" else ""
+                // Every n-th row of each part: evenly spread and repeatable. Not rand(): on ClickHouse 26.9 a table
+                // with skip indexes returns no rows for a rand() filter.
+                if (every >= 2) " WHERE _part_offset % $every = 0" else ""
             }
         }
     }
