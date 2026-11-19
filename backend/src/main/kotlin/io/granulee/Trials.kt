@@ -107,10 +107,16 @@ internal fun createSql(target: String, live: LiveTable, request: TrialRequest?, 
 }
 
 /** A trial table: plain MergeTree. Wide parts only, because compact parts keep all columns in one file and per-column sizes would read as zero. */
-private fun trialSql(target: String, live: LiveTable, request: TrialRequest?): String = createSql(
+private fun trialSql(target: String, live: LiveTable, request: TrialRequest?, compactFirst: Boolean = false): String = createSql(
     target, live, request, "MergeTree",
-    "SETTINGS min_bytes_for_wide_part = 0, min_rows_for_wide_part = 0" + (live.indexGranularity?.let { ", index_granularity = $it" } ?: ""),
+    "SETTINGS " + (if (compactFirst) COMPACT_PARTS else WIDE_PARTS) + (live.indexGranularity?.let { ", index_granularity = $it" } ?: ""),
 )
+
+private const val WIDE_PARTS = "min_bytes_for_wide_part = 0, min_rows_for_wide_part = 0"
+
+// A compact part is a handful of files whatever its columns are. Tables with JSON columns are copied into compact
+// parts, which are cheap to write and to merge in the background, and become one wide part in the final merge.
+private const val COMPACT_PARTS = "min_bytes_for_wide_part = 1099511627776, min_rows_for_wide_part = 0"
 
 /** How a copied column is read when the candidate gives it another type. */
 private fun copyExpression(c: ColumnFacts, newType: String?): String = when {
@@ -493,6 +499,7 @@ class TrialService(
         }
         // Set once the live table is known; applied to every statement of the run.
         var limits = emptyMap<String, String>()
+        var compactFirst = false
         fun exec(sql: String, settings: Map<String, String> = emptyMap()): ExecStats {
             if (id in cancelled) throw TrialCancelled()
             val queryId = "granulee-$id-${++statement}"
@@ -522,7 +529,8 @@ class TrialService(
             val overrides = request.columns.associateBy { it.name }
             if ((live.columns.map { it.type } + request.columns.map { it.type }).any(::hasDynamicSubcolumns)) {
                 limits = FEW_FILES
-                say("The table has JSON or Dynamic columns, which are thousands of files per part: copying and scanning with few threads")
+                compactFirst = true
+                say("The table has JSON or Dynamic columns, which are thousands of files per wide part: copying into compact parts and with few threads")
             }
             val changedColumns = live.columns.filter { c ->
                 val o = overrides[c.name] ?: return@filter false
@@ -534,8 +542,8 @@ class TrialService(
             ).count { it }
             update(id) { it.copy(changedKeys = changedKeys, changedColumns = changedColumns.size) }
 
-            val baseDdl = trialSql(base, live, null)
-            val candDdl = trialSql(cand, live, request)
+            val baseDdl = trialSql(base, live, null, compactFirst)
+            val candDdl = trialSql(cand, live, request, compactFirst)
             val alterDdl = migrationSql(trial.database, trial.table, live, request)
             runCatching { conn.exec("CREATE DATABASE IF NOT EXISTS ${Sql.id(trial.scratchDatabase)}") }
             exec(baseDdl)
@@ -563,7 +571,7 @@ class TrialService(
             if (request.measureInserts) {
                 progress(52)
                 val twin = Sql.table(trial.scratchDatabase, trial.baseTable + "_ins")
-                exec(trialSql(twin, live, null))
+                exec(trialSql(twin, live, null, compactFirst))
                 baseInsertMs = exec("INSERT INTO $twin ($columnList) SELECT $columnList FROM $base", insertSettings).elapsedMs
                 exec("DROP TABLE IF EXISTS $twin SYNC")
                 say("Timed the same insert into a second baseline table (${seconds(baseInsertMs)}) to compare insert throughput")
@@ -573,6 +581,11 @@ class TrialService(
             enter(++step, 60)
             var baseMergeMs: Double? = null
             var candMergeMs: Double? = null
+            if (compactFirst) {
+                // From here on parts are written wide, so the merge below leaves per-column files to measure.
+                listOf(base, cand).forEach { exec("ALTER TABLE $it MODIFY SETTING $WIDE_PARTS") }
+                if (!request.optimizeFinal) say("Without the full merge the copied parts stay compact, so per-column sizes are not available")
+            }
             if (request.optimizeFinal) {
                 baseMergeMs = exec("OPTIMIZE TABLE $base FINAL").elapsedMs
                 candMergeMs = exec("OPTIMIZE TABLE $cand FINAL").elapsedMs
