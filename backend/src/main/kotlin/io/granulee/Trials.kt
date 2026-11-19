@@ -62,6 +62,16 @@ fun normalizeKey(key: String): String {
 
 private fun sameText(a: String, b: String) = a.replace(Regex("\\s+"), "") == b.replace(Regex("\\s+"), "")
 
+/**
+ * A JSON, Dynamic or Variant column is stored as one set of files per path, easily thousands per wide part, and
+ * every reading or writing thread opens its own. With the server's default of one thread per core that runs into
+ * "Too many open files", so trials on such tables read and write with few threads.
+ */
+internal fun hasDynamicSubcolumns(type: String): Boolean =
+    Regex("\\b(JSON|Dynamic|Variant)\\b").containsMatchIn(type.replace(Regex("'(?:[^'\\\\]|\\\\.)*'"), ""))
+
+private val FEW_FILES = mapOf("max_threads" to "2", "max_insert_threads" to "1")
+
 /** CREATE TABLE with the production columns, and the request's changes if given. */
 internal fun createSql(target: String, live: LiveTable, request: TrialRequest?, engine: String, tail: String): String {
     val overrides = request?.columns?.associateBy { it.name }.orEmpty()
@@ -420,12 +430,14 @@ class TrialService(
                 steps = it.steps.mapIndexed { i, s -> s.copy(state = if (i < step) "done" else if (i == step) "running" else "pending") },
             )
         }
+        // Set once the live table is known; applied to every statement of the run.
+        var limits = emptyMap<String, String>()
         fun exec(sql: String, settings: Map<String, String> = emptyMap()): ExecStats {
             if (id in cancelled) throw TrialCancelled()
             val queryId = "granulee-$id-${++statement}"
             runningQuery[id] = queryId
             try {
-                return ch!!.exec(sql, settings, queryId)
+                return ch!!.exec(sql, limits + settings, queryId)
             } catch (e: ChException) {
                 if (id in cancelled) throw TrialCancelled()
                 throw e
@@ -447,6 +459,10 @@ class TrialService(
             enter(step, 2)
             val live = liveTable(conn, trial.database, trial.table)
             val overrides = request.columns.associateBy { it.name }
+            if ((live.columns.map { it.type } + request.columns.map { it.type }).any(::hasDynamicSubcolumns)) {
+                limits = FEW_FILES
+                say("The table has JSON or Dynamic columns, which are thousands of files per part: copying and scanning with few threads")
+            }
             val changedColumns = live.columns.filter { c ->
                 val o = overrides[c.name] ?: return@filter false
                 !sameText(o.type.ifBlank { c.type }, c.type) || !sameText(o.codec, Types.codecBody(c.codec))

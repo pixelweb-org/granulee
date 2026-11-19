@@ -96,4 +96,11 @@ class MigrationSqlTest {
         assertTrue(out.contains("INDEX `idx_pos` (lat, lon) TYPE set(100) GRANULARITY 2"), out)
         assertTrue(out.contains("INDEX `idx_fn` lower(country) TYPE set(100) GRANULARITY 2"), out)
     }
+
+    @Test
+    fun `JSON, Dynamic and Variant types are recognised wherever they are nested`() {
+        listOf("JSON", "JSON(max_dynamic_paths = 100)", "Array(JSON)", "Nullable(Dynamic)", "Variant(String, UInt64)", "Map(String, Dynamic)")
+            .forEach { assertTrue(hasDynamicSubcolumns(it), it) }
+        listOf("String", "LowCardinality(String)", "Array(Nullable(Int64))", "Enum8('JSON' = 1)").forEach { assertFalse(hasDynamicSubcolumns(it), it) }
+    }
 }
