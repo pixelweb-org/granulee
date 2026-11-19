@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/pixelweb-org/granulee/compare/v0.1.0...v0.2.0) (2026-11-19)
+
+
+### Features
+
+* Neon Volt look ([5031736](https://github.com/pixelweb-org/granulee/commit/5031736c0db04b5e0886a15570a21322b6c01827))
+
 ## 0.1.0 (2026-11-19)
 
 
