@@ -8,10 +8,12 @@ interface Props {
   children: ReactNode;
   /** Buttons, right-aligned. */
   actions: ReactNode;
+  /** Room for SQL. */
+  wide?: boolean;
 }
 
 /** Modal dialog: traps Tab, closes on Esc and on a click outside, returns focus when it closes. */
-export function Dialog({ title, onClose, children, actions }: Props) {
+export function Dialog({ title, onClose, children, actions, wide }: Props) {
   const titleId = useId();
   const ref = useRef<HTMLDivElement>(null);
 
@@ -55,7 +57,7 @@ export function Dialog({ title, onClose, children, actions }: Props) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div ref={ref} className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
+      <div ref={ref} className={wide ? 'dialog dialog-wide' : 'dialog'} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
         <h2 id={titleId} className="headline">
           {title}
         </h2>

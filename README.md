@@ -10,6 +10,9 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
   rows into both, merge them, and compare sizes, column scans, insert throughput and replayed queries.
   The result also shows the statements that would apply the candidate to the production table:
   `ALTER TABLE` for column, codec and index changes, a rebuild script when a key changes.
+  "Apply to production" on a finished trial shows those statements again, computed against the table as
+  it is now, and runs the `ALTER`s after you confirm (the source's user needs `ALTER` on the table).
+  A rebuild is only shown, never run.
 
 ## Layout
 

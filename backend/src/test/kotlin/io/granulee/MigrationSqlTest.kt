@@ -103,4 +103,18 @@ class MigrationSqlTest {
             .forEach { assertTrue(hasDynamicSubcolumns(it), it) }
         listOf("String", "LowCardinality(String)", "Array(Nullable(Int64))", "Enum8('JSON' = 1)").forEach { assertFalse(hasDynamicSubcolumns(it), it) }
     }
+
+    @Test
+    fun `only ALTERs are runnable statements`() {
+        val alter = migration("analytics", "events", live, request(dropIndexes = listOf("idx_country"), columns = arrayOf(TrialColumn("properties", "String", "ZSTD(3)"))))
+        assertEquals("alter", alter.kind)
+        assertEquals(2, alter.statements.size)
+        assertTrue(alter.statements.all { it.contains("ALTER TABLE `analytics`.`events`") && !it.endsWith(";") }, alter.statements.toString())
+
+        val rebuild = migration("analytics", "events", live, request(sortingKey = "event_time, user_id"))
+        assertEquals("rebuild", rebuild.kind)
+        assertTrue(rebuild.statements.isEmpty())
+
+        assertEquals("none", migration("analytics", "events", live, request()).kind)
+    }
 }

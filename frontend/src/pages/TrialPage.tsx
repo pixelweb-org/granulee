@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import type { Trial, TrialMetric, TrialResult } from '../api/types';
@@ -10,7 +11,7 @@ import { CodeBlock } from '../components/CodeBlock';
 import { PageHeader } from '../components/PageHeader';
 import { ErrorState, Loading } from '../components/States';
 import { Status, StatusDot, type Tone } from '../components/StatusDot';
-import { RemoveTrialDialog, TrialProgressCard, trialTone, useRemoveTrial } from '../components/TrialParts';
+import { ApplyTrialDialog, RemoveTrialDialog, TrialProgressCard, trialTone, useRemoveTrial } from '../components/TrialParts';
 import {
   fmtBytes,
   fmtBytesPair,
@@ -27,7 +28,6 @@ import {
   fmtSpeed,
   fmtTime,
 } from '../lib/format';
-import { routes } from '../lib/routes';
 import { vars } from '../lib/style';
 
 function metricValue(m: TrialMetric): string {
@@ -60,7 +60,8 @@ export function TrialPage() {
   const navigate = useNavigate();
   const { data: trial, error, reload } = useApi(() => api.trial(id), [id]);
   const [removing, setRemoving] = useRemoveTrial();
-  usePolling(trial?.status === 'running', 2000, () => void reload(true));
+  const [applying, setApplying] = useState(false);
+  usePolling(trial?.status === 'running' || trial?.apply?.status === 'running', 2000, () => void reload(true));
 
   if (error && !trial) {
     return (
@@ -103,7 +104,7 @@ export function TrialPage() {
           trial.status === 'running' ? undefined : (
             <>
               {done ? (
-                <Button variant="secondary" to={routes.recommendations(trial.sourceId, trial.database, trial.table)}>
+                <Button variant="secondary" disabled={trial.apply?.status === 'running'} onClick={() => setApplying(true)}>
                   Apply to production
                 </Button>
               ) : null}
@@ -114,6 +115,27 @@ export function TrialPage() {
           )
         }
       />
+
+      {trial.apply ? (
+        <Card as="section" style={{ gap: 8, alignItems: 'flex-start' }}>
+          <Status tone={trial.apply.status === 'completed' ? 'success' : trial.apply.status === 'failed' ? 'error' : 'active'} className="subhead">
+            {trial.apply.status === 'running'
+              ? `Applying to ${trial.database}.${trial.table} · statement ${Math.min(trial.apply.done + 1, trial.apply.total)} of ${trial.apply.total}`
+              : trial.apply.status === 'completed'
+                ? `Applied to ${trial.database}.${trial.table} ${fmtClock(trial.apply.finishedAt)}`
+                : `Applying to ${trial.database}.${trial.table} failed`}
+          </Status>
+          {trial.apply.status === 'failed' ? (
+            <>
+              {trial.apply.error ? <p className="body-sm muted" style={{ overflowWrap: 'anywhere' }}>{trial.apply.error}</p> : null}
+              <p className="caption muted">
+                {trial.apply.done} of {trial.apply.total} statements ran before the error and stay in effect. “Apply to production” shows what is still left.
+              </p>
+            </>
+          ) : null}
+          {trial.apply.status === 'running' ? <p className="caption muted">Type changes rewrite the column in every part; this page follows along.</p> : null}
+        </Card>
+      ) : null}
 
       {trial.status === 'running' ? <TrialProgressCard trial={trial} onChanged={() => void reload(true)} /> : null}
 
@@ -142,6 +164,16 @@ export function TrialPage() {
         </Card>
       ) : null}
 
+      {applying ? (
+        <ApplyTrialDialog
+          trial={trial}
+          onClose={() => setApplying(false)}
+          onStarted={() => {
+            setApplying(false);
+            void reload(true);
+          }}
+        />
+      ) : null}
       {removing ? (
         <RemoveTrialDialog
           trial={removing}

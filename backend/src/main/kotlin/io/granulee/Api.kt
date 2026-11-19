@@ -334,6 +334,28 @@ data class Trial(
     val changedColumns: Int,
     val result: TrialResult?,
     val log: List<LogLine>,
+    /** The last time the candidate was applied to the production table, if ever. */
+    val apply: TrialApply? = null,
+)
+
+/** What "Apply to production" would run right now, computed against the table as it is. */
+data class ApplyPlan(
+    val kind: String, // none | alter | rebuild
+    val sql: String,
+    val statements: Int,
+    val sourceName: String,
+)
+
+data class ApplyRequest(val sql: String = "")
+
+data class TrialApply(
+    val status: String, // running | completed | failed
+    val startedAt: String,
+    val finishedAt: String?,
+    val error: String?,
+    val sql: String,
+    val done: Int,
+    val total: Int,
 )
 
 data class TrialList(val trials: List<Trial>, val scratchUsedBytes: Long, val scratchFreeBytes: Long?)

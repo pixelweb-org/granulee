@@ -8,6 +8,7 @@ import type {
   SourceInput,
   TableDetail,
   TableRecommendations,
+  ApplyPlan,
   Trial,
   TrialList,
   TrialPlan,
@@ -79,6 +80,8 @@ export const api = {
     request<TrialPlan>('GET', `/trials/plan${qs({ source, database, table })}`),
   trial: (id: string) => request<Trial>('GET', `/trials/${e(id)}`),
   startTrial: (req: TrialRequest) => request<Trial>('POST', '/trials', req),
+  applyPlan: (id: string) => request<ApplyPlan>('GET', `/trials/${e(id)}/apply`),
+  applyTrial: (id: string, sql: string) => request<Trial>('POST', `/trials/${e(id)}/apply`, { sql }),
   cancelTrial: (id: string) => request<Trial>('POST', `/trials/${e(id)}/cancel`),
   deleteTrial: (id: string) => request<void>('DELETE', `/trials/${e(id)}`),
 };

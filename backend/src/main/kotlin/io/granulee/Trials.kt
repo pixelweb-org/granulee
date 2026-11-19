@@ -124,7 +124,13 @@ private fun copyExpression(c: ColumnFacts, newType: String?): String = when {
  * The statements that bring the production table to the candidate's schema: ALTER TABLE where ClickHouse
  * can change the table in place, a rebuild script where it cannot. Empty when the candidate changes nothing.
  */
-internal fun migrationSql(database: String, table: String, live: LiveTable, request: TrialRequest): String {
+internal fun migrationSql(database: String, table: String, live: LiveTable, request: TrialRequest): String =
+    migration(database, table, live, request).sql
+
+/** `statements` are what Granulee may run itself: only the ALTERs, never a rebuild. */
+internal data class Migration(val kind: String, val sql: String, val statements: List<String>)
+
+internal fun migration(database: String, table: String, live: LiveTable, request: TrialRequest): Migration {
     val name = Sql.table(database, table)
     val overrides = request.columns.associateBy { it.name }
     // type / codec are null where the candidate keeps what production has
@@ -146,7 +152,7 @@ internal fun migrationSql(database: String, table: String, live: LiveTable, requ
         val fresh = Sql.table(database, table + "_new")
         val copied = live.columns.filter { it.defaultKind.isEmpty() || it.defaultKind == "DEFAULT" }
         val engine = Analyzer.engineClause(live.engineFull).ifBlank { "MergeTree" }
-        return buildString {
+        val script = buildString {
             append("-- ALTER TABLE cannot do this in place: ${rebuild.joinToString(", ")}.\n")
             append("-- The table is rebuilt instead. Pause writes while the rows are copied, or backfill them afterwards.\n")
             if (engine.startsWith("Replicated")) append("-- Replicated table: give the new table its own ZooKeeper path.\n")
@@ -157,6 +163,7 @@ internal fun migrationSql(database: String, table: String, live: LiveTable, requ
             append("-- $fresh now holds the old data. Drop it once the new table is verified:\n")
             append("-- DROP TABLE $fresh;")
         }
+        return Migration("rebuild", script, emptyList())
     }
 
     fun alter(comment: String, actions: List<String>) =
@@ -188,7 +195,7 @@ internal fun migrationSql(database: String, table: String, live: LiveTable, requ
     if (dropped.isNotEmpty()) {
         blocks.add(alter("Skip indexes the candidate leaves out.", dropped.map { "DROP INDEX ${Sql.id(it.name)}" }))
     }
-    return blocks.joinToString("\n\n")
+    return Migration(if (blocks.isEmpty()) "none" else "alter", blocks.joinToString("\n\n"), blocks.map { it.removeSuffix(";") })
 }
 
 private fun median(values: List<Double>): Double? {
@@ -226,11 +233,17 @@ class TrialService(
     private val random = SecureRandom()
 
     init {
-        val interrupted = trials.filter { it.status == "running" }
+        val interrupted = trials.filter { it.status == "running" || it.apply?.status == "running" }
         if (interrupted.isNotEmpty()) {
             val now = Instant.now().toString()
             save(trials.map {
-                if (it.status != "running") it else it.copy(
+                if (it.apply?.status == "running") it.copy(
+                    apply = it.apply.copy(
+                        status = "failed",
+                        finishedAt = now,
+                        error = "Granulee restarted while the statements were running. ClickHouse may still be working on them: check system.mutations.",
+                    ),
+                ) else if (it.status != "running") it else it.copy(
                     status = "failed",
                     error = "Granulee restarted while this trial was running. Its scratch tables may still exist; remove the trial to drop them.",
                     finishedAt = now,
@@ -388,9 +401,57 @@ class TrialService(
         return find(id)
     }
 
+    // ---- apply to production ----
+
+    private fun currentMigration(trial: Trial): Migration {
+        val source = sources.find(trial.sourceId)
+        val live = liveTable(sources.connection(source), trial.database, trial.table)
+        return migration(trial.database, trial.table, live, trial.request)
+    }
+
+    fun applyPlan(id: String): ApplyPlan {
+        val trial = find(id)
+        if (trial.status != "completed") throw BadRequestException("Only a completed trial can be applied")
+        val m = currentMigration(trial)
+        return ApplyPlan(m.kind, m.sql, m.statements.size, trial.sourceName)
+    }
+
+    /** Runs the ALTER statements the user has just reviewed; refuses if the table has changed since. */
+    fun apply(id: String, reviewed: String): Trial {
+        val trial = find(id)
+        if (trial.status != "completed") throw BadRequestException("Only a completed trial can be applied")
+        if (trial.apply?.status == "running") throw BadRequestException("Trial #$id is already being applied")
+        val m = currentMigration(trial)
+        when {
+            m.kind == "none" -> throw BadRequestException("${trial.database}.${trial.table} already matches the candidate")
+            m.kind == "rebuild" -> throw BadRequestException("This candidate needs a table rebuild, which Granulee does not run")
+            m.sql != reviewed -> throw BadRequestException("${trial.database}.${trial.table} changed since you opened the review. Review the statements again.")
+        }
+        val started = update(id) {
+            it.copy(apply = TrialApply("running", Instant.now().toString(), null, null, m.sql, 0, m.statements.size))
+        }
+        pool.execute {
+            fun progress(change: (TrialApply) -> TrialApply) = update(id) { it.copy(apply = it.apply?.let(change)) }
+            try {
+                val ch = sources.connection(sources.find(trial.sourceId))
+                m.statements.forEachIndexed { i, statement ->
+                    ch.exec(statement, queryId = "granulee-$id-apply-${i + 1}")
+                    progress { it.copy(done = i + 1) }
+                }
+                progress { it.copy(status = "completed", finishedAt = Instant.now().toString()) }
+                log.info("Applied trial {} to {}.{}", id, trial.database, trial.table)
+            } catch (e: Exception) {
+                log.warn("Applying trial {} failed: {}", id, e.message)
+                progress { it.copy(status = "failed", finishedAt = Instant.now().toString(), error = e.message ?: e.javaClass.simpleName) }
+            }
+        }
+        return started
+    }
+
     fun delete(id: String) {
         val trial = find(id)
         if (trial.status == "running") throw BadRequestException("Trial #$id is still running. Cancel it first.")
+        if (trial.apply?.status == "running") throw BadRequestException("Trial #$id is being applied to production. Wait for it to finish.")
         val source = sources.all().firstOrNull { it.id == trial.sourceId }
         if (source != null) dropTables(sources.connection(source), trial)
         synchronized(lock) { save(trials.filter { it.id != id }) }
@@ -816,6 +877,12 @@ class TrialController(private val trials: TrialService) {
 
     @PostMapping
     fun start(@RequestBody request: TrialRequest): Trial = trials.start(request)
+
+    @GetMapping("/{id}/apply")
+    fun applyPlan(@PathVariable id: String): ApplyPlan = trials.applyPlan(id)
+
+    @PostMapping("/{id}/apply")
+    fun apply(@PathVariable id: String, @RequestBody request: ApplyRequest): Trial = trials.apply(id, request.sql)
 
     @PostMapping("/{id}/cancel")
     fun cancel(@PathVariable id: String): Trial = trials.cancel(id)

@@ -342,6 +342,25 @@ export interface Trial {
   changedColumns: number;
   result: TrialResult | null;
   log: { at: string; message: string }[];
+  apply: TrialApply | null; // the last time the candidate was applied to production
+}
+
+/** What "Apply to production" would run right now, computed against the table as it is. */
+export interface ApplyPlan {
+  kind: 'none' | 'alter' | 'rebuild';
+  sql: string;
+  statements: number; // statements Granulee would run; 0 for a rebuild
+  sourceName: string;
+}
+
+export interface TrialApply {
+  status: 'running' | 'completed' | 'failed';
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+  sql: string;
+  done: number;
+  total: number;
 }
 
 export interface TrialList {
