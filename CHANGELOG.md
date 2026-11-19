@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/pixelweb-org/granulee/compare/v0.2.1...v0.2.2) (2026-11-19)
+
+
+### Bug Fixes
+
+* sample every n-th row per part instead of filtering on rand() ([0dfd346](https://github.com/pixelweb-org/granulee/commit/0dfd346b7bc20d119cb8543d89c027cf80a39fee))
+
 ## [0.2.1](https://github.com/pixelweb-org/granulee/compare/v0.2.0...v0.2.1) (2026-11-19)
 
 
