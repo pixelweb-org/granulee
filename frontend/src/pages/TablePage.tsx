@@ -52,7 +52,7 @@ export function TablePage() {
           </Link>
         }
         title={t.name}
-        titleAside={<span className="eyebrow">{t.engine}</span>}
+        titleAside={<span className="eyebrow nv-badge">{t.engine}</span>}
         description={t.comment.trim() ? t.comment : 'Read from system.tables, system.parts, system.columns and system.data_skipping_indices.'}
         actions={
           <>

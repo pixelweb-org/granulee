@@ -392,7 +392,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
         <Button stretch disabled={!canStart} busy={start.busy} onClick={submit}>
           {start.busy ? 'Starting…' : 'Start trial'}
         </Button>
-        <Button variant="secondary" stretch to={routes.recommendations(plan.sourceId, plan.database, plan.table)}>
+        <Button variant="ghost" stretch to={routes.recommendations(plan.sourceId, plan.database, plan.table)}>
           Cancel
         </Button>
         <InlineError message={start.error} />

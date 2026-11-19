@@ -72,7 +72,7 @@ export function RemoveTrialDialog({ trial, onClose, onRemoved }: { trial: Trial;
       onClose={onClose}
       actions={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button

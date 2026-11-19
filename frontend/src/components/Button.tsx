@@ -1,7 +1,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
-type Variant = 'primary' | 'secondary';
+type Variant = 'primary' | 'secondary' | 'ghost';
 
 interface Props extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'> {
   variant?: Variant;
@@ -14,7 +14,7 @@ interface Props extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className
 }
 
 export function Button({ variant = 'primary', to, danger, busy, stretch, children, disabled, style, ...rest }: Props) {
-  const cls = `ee-btn ee-btn-${variant}${danger ? ' ee-btn-danger' : ''}`;
+  const cls = `nv-btn nv-btn-${danger ? 'danger' : variant}`;
   const st = stretch ? { alignSelf: 'stretch', ...style } : style;
   if (to && !disabled) {
     return (

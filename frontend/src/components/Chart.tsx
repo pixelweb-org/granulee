@@ -104,6 +104,8 @@ interface Slice {
 export function Chart(props: ChartProps) {
   const type = props.type ?? 'bar';
   const isPie = type === 'pie' || type === 'donut';
+  // One series, or one highlighted among muted ones, takes the accent instead of a categorical slot.
+  const single = !isPie && (props.series.length === 1 || props.highlight != null);
   const fmt = props.format ?? full;
   const tickFmt = props.format ?? compact;
   const plotH = props.height ?? 240;
@@ -473,7 +475,7 @@ export function Chart(props: ChartProps) {
 
   const label = `${props.title ?? 'Chart'}. ${isPie ? 'Use arrow keys to step through slices.' : `Use arrow keys to step through ${props.categoryLabel ?? 'categories'}.`}`;
   return (
-    <figure className={cls('bd-chart', props.bare && 'bd-chart-bare', props.className)}>
+    <figure className={cls('bd-chart', props.bare && 'bd-chart-bare', single && 'nv-single', props.className)}>
       <div className="bd-chart-head">
         <div>
           {props.title ? <figcaption className="subhead">{props.title}</figcaption> : null}

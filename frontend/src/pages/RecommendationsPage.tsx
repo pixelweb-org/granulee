@@ -169,11 +169,11 @@ export function RecommendationsPage() {
 
       {n ? (
         <div role="group" aria-label="Filter recommendations" className="row">
-          <button type="button" className="ee-pill is-filter" aria-pressed={activeGroup === 'all'} onClick={() => setGroup('all')}>
+          <button type="button" className="nv-btn nv-btn-ghost" aria-pressed={activeGroup === 'all'} onClick={() => setGroup('all')}>
             All {n}
           </button>
           {GROUPS.filter((g) => counts[g.key] > 0).map((g) => (
-            <button key={g.key} type="button" className="ee-pill is-filter" aria-pressed={activeGroup === g.key} onClick={() => setGroup(g.key)}>
+            <button key={g.key} type="button" className="nv-btn nv-btn-ghost" aria-pressed={activeGroup === g.key} onClick={() => setGroup(g.key)}>
               {g.label} {counts[g.key]}
             </button>
           ))}
@@ -254,7 +254,7 @@ function RecommendationCard({ rec, busy, onDismiss }: { rec: Recommendation; bus
               {showQueries ? 'Hide queries' : 'Show queries'}
             </Button>
           ) : null}
-          <Button variant="secondary" disabled={busy} onClick={onDismiss}>
+          <Button variant="ghost" disabled={busy} onClick={onDismiss}>
             Dismiss
           </Button>
         </div>

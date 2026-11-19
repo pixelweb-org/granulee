@@ -1,6 +1,5 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useSources } from '../state/sources';
-import { useTheme } from '../state/theme';
 import { fmtClock, fmtUntil } from '../lib/format';
 import { routes } from '../lib/routes';
 import type { Source } from '../api/types';
@@ -24,7 +23,6 @@ function scanCaption(sources: Source[]): string {
 
 export function Layout() {
   const { sources, selectedId, selected, select } = useSources();
-  const { theme, toggle } = useTheme();
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
@@ -61,14 +59,9 @@ export function Layout() {
             </Link>
           ))}
         </nav>
-        <div className="sidebar-foot">
-          <p className="caption muted" style={{ padding: '0 12px' }}>
-            {scanCaption(selected ? [selected] : sources)}
-          </p>
-          <button type="button" className="ee-pill" aria-pressed={theme === 'dark'} onClick={toggle} style={{ alignSelf: 'flex-start', margin: '0 12px' }}>
-            {theme === 'dark' ? 'Light mode' : 'Dark mode'}
-          </button>
-        </div>
+        <p className="caption muted sidebar-foot" style={{ padding: '0 12px' }}>
+          {scanCaption(selected ? [selected] : sources)}
+        </p>
       </aside>
       <main className="main">
         <div className="page">

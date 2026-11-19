@@ -8,7 +8,7 @@ export function Field({ label, htmlFor, help, helpId, children }: { label: strin
       </label>
       {children}
       {help ? (
-        <span id={helpId} className="ee-help">
+        <span id={helpId} className="nv-help">
           {help}
         </span>
       ) : null}
@@ -28,7 +28,7 @@ export function TextInput({ label, help, numeric, id, ...rest }: TextInputProps)
   const helpId = help ? `${inputId}-help` : undefined;
   return (
     <Field label={label} htmlFor={inputId} help={help} helpId={helpId}>
-      <input id={inputId} className={`ee-input${numeric ? ' g-num' : ''}`} aria-describedby={helpId} {...rest} />
+      <input id={inputId} className={`nv-input${numeric ? ' g-num' : ''}`} aria-describedby={helpId} {...rest} />
     </Field>
   );
 }

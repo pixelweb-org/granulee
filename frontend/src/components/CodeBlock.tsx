@@ -17,7 +17,7 @@ export function CopyButton({ text, children }: { text: string; children: ReactNo
   return (
     <button
       type="button"
-      className="ee-btn ee-btn-secondary"
+      className="nv-btn nv-btn-secondary"
       onClick={async () => {
         const ok = await copyText(text);
         setState(ok ? 'copied' : 'failed');

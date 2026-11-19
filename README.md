@@ -16,7 +16,7 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
 | Path | What |
 | --- | --- |
 | `backend/` | Kotlin, Spring Boot 4, ClickHouse Java client v2 (HTTP). Serves `/api/**`. |
-| `frontend/` | React 19, Vite, TypeScript. Editorial Enterprise look, light and dark. |
+| `frontend/` | React 19, Vite, TypeScript. ClickHouse Neon Volt look, dark only. |
 | `frontend/src/api/types.ts` | The API contract. `backend/.../Api.kt` mirrors it. |
 | `dev/seed.sh` | Fills a local ClickHouse with sample data that has findings. |
 
