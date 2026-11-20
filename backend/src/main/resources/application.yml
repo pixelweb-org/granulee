@@ -1,6 +1,15 @@
 spring:
   application:
     name: granulee
+  web:
+    resources:
+      cache:
+        # index.html and the favicon are always fetched afresh, so a new release shows up on the next load.
+        # The files in the image all carry the same 1970 timestamp, which would otherwise let a browser
+        # keep the old page for years, and would make every revalidation answer "not modified".
+        cachecontrol:
+          no-cache: true
+        use-last-modified: false
 server:
   port: 8080
 granulee:

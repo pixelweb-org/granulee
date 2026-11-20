@@ -2,6 +2,11 @@ package io.granulee
 
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
+import org.springframework.context.annotation.Configuration
+import org.springframework.http.CacheControl
+import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
+import java.time.Duration
 import org.springframework.boot.info.BuildProperties
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -52,4 +57,17 @@ class HealthController(build: ObjectProvider<BuildProperties>) {
 
     @GetMapping("/api/health")
     fun health(): Map<String, String> = mapOf("status" to "UP", "version" to version)
+}
+
+/**
+ * The frontend's scripts and styles carry a content hash in their names, so they can be cached for good.
+ * Everything else that is static (index.html, the favicon) is never cached; see application.yml.
+ */
+@Configuration
+class StaticCaching : WebMvcConfigurer {
+    override fun addResourceHandlers(registry: ResourceHandlerRegistry) {
+        registry.addResourceHandler("/assets/**")
+            .addResourceLocations("classpath:/static/assets/")
+            .setCacheControl(CacheControl.maxAge(Duration.ofDays(365)).cachePublic().immutable())
+    }
 }
