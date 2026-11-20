@@ -9,6 +9,7 @@ import type {
   TableDetail,
   TableRecommendations,
   ApplyPlan,
+  TableIndexUsage,
   TableUsage,
   Trial,
   TrialList,
@@ -78,6 +79,8 @@ export const api = {
 
   tableUsage: (source: string, database: string, table: string) =>
     request<TableUsage>('GET', `/sources/${e(source)}/databases/${e(database)}/tables/${e(table)}/usage`),
+  indexUsage: (source: string, database: string, table: string) =>
+    request<TableIndexUsage>('GET', `/sources/${e(source)}/databases/${e(database)}/tables/${e(table)}/index-usage`),
   trials: (source?: string | null) => request<TrialList>('GET', `/trials${qs({ source })}`),
   trialPlan: (source: string, database: string, table: string) =>
     request<TrialPlan>('GET', `/trials/plan${qs({ source, database, table })}`),

@@ -225,6 +225,7 @@ data class TrialPlanRecommendation(
     val sortingKey: String? = null,
     val column: ColumnChange? = null,
     val dropIndex: String? = null,
+    val addIndex: TrialIndex? = null,
 )
 
 data class TrialPlan(
@@ -249,6 +250,9 @@ data class TrialPlan(
 
 data class TrialColumn(val name: String = "", val type: String = "", val codec: String = "")
 
+/** A skip index the candidate gets on top of the production ones. */
+data class TrialIndex(val name: String = "", val expression: String = "", val type: String = "", val granularity: Int = 1)
+
 data class TrialRequest(
     val sourceId: String = "",
     val database: String = "",
@@ -258,6 +262,7 @@ data class TrialRequest(
     val sortingKey: String = "",
     val columns: List<TrialColumn> = emptyList(),
     val dropIndexes: List<String> = emptyList(),
+    val addIndexes: List<TrialIndex> = emptyList(),
     val rows: Long = 0,
     val sampling: String = "even", // even | recent | where
     val where: String? = null,
@@ -300,6 +305,9 @@ data class TrialQueryResult(
     val baseReadRows: Long?,
     val candReadRows: Long?,
     val error: String?,
+    /** How the indexes narrowed the read on each table, from EXPLAIN. */
+    val baseExplain: QueryExplain? = null,
+    val candExplain: QueryExplain? = null,
 )
 
 data class TrialResult(

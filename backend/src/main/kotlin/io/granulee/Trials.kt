@@ -45,6 +45,7 @@ private data class Sizes(
     val parts: Long,
     val primaryKeyBytes: Long,
     val columns: Map<String, Pair<Long, Long>>,
+    val indexBytes: Long = 0,
 )
 
 /** "(a, b)" and "a, b" mean the same sorting key. */
@@ -85,6 +86,7 @@ internal fun createSql(target: String, live: LiveTable, request: TrialRequest?, 
             if (codec.isNotEmpty() && c.defaultKind != "ALIAS") append(" CODEC($codec)")
         }
     }
+    val added = request?.addIndexes.orEmpty().map { indexSql(it) }.map { "    $it" }
     val indexes = live.indexes.filter { request == null || it.name !in request.dropIndexes }
         .map {
             // system.data_skipping_indices lists an index over several expressions as "a, b"; DDL wants "(a, b)".
@@ -95,7 +97,7 @@ internal fun createSql(target: String, live: LiveTable, request: TrialRequest?, 
     val sortingKey = normalizeKey(request?.sortingKey ?: live.sortingKey)
     return buildString {
         append("CREATE TABLE $target\n(\n")
-        append((columns + indexes).joinToString(",\n"))
+        append((columns + indexes + added).joinToString(",\n"))
         append("\n)\nENGINE = $engine\n")
         if (partitionKey.isNotBlank()) append("PARTITION BY $partitionKey\n")
         if (live.primaryKey.isNotBlank() && !sameText(live.primaryKey, live.sortingKey) && sameText(sortingKey, normalizeKey(live.sortingKey))) {
@@ -104,6 +106,12 @@ internal fun createSql(target: String, live: LiveTable, request: TrialRequest?, 
         append("ORDER BY (${sortingKey.ifBlank { "tuple()" }})")
         if (tail.isNotBlank()) append("\n$tail")
     }
+}
+
+/** INDEX … as it stands in CREATE TABLE and after ADD in ALTER TABLE. */
+internal fun indexSql(index: TrialIndex): String {
+    val expression = if (splitTopLevel(index.expression).size > 1) "(${index.expression.trim()})" else index.expression.trim()
+    return "INDEX ${Sql.id(index.name.trim())} $expression TYPE ${index.type.trim()} GRANULARITY ${index.granularity.coerceAtLeast(1)}"
 }
 
 /** A trial table: plain MergeTree. Wide parts only, because compact parts keep all columns in one file and per-column sizes would read as zero. */
@@ -200,6 +208,16 @@ internal fun migration(database: String, table: String, live: LiveTable, request
     }
     if (dropped.isNotEmpty()) {
         blocks.add(alter("Skip indexes the candidate leaves out.", dropped.map { "DROP INDEX ${Sql.id(it.name)}" }))
+    }
+    val added = request.addIndexes.filter { new -> live.indexes.none { it.name == new.name.trim() } }
+    if (added.isNotEmpty()) {
+        blocks.add(alter("New skip indexes. ADD INDEX only covers parts written from now on.", added.map { "ADD ${indexSql(it)}" }))
+        blocks.add(
+            alter(
+                "Builds the new indexes for the existing parts, as a mutation. Progress is in system.mutations.",
+                added.map { "MATERIALIZE INDEX ${Sql.id(it.name.trim())}" },
+            ),
+        )
     }
     return Migration(if (blocks.isEmpty()) "none" else "alter", blocks.joinToString("\n\n"), blocks.map { it.removeSuffix(";") })
 }
@@ -365,6 +383,12 @@ class TrialService(
         if (request.sampling == "where" && request.where.isNullOrBlank()) throw BadRequestException("Enter the WHERE clause for the sample")
         if (request.where.orEmpty().contains(';')) throw BadRequestException("The WHERE clause must be a single expression")
         if (request.columns.isEmpty()) throw BadRequestException("The candidate schema has no columns")
+        request.addIndexes.forEach { index ->
+            if (!Regex("[A-Za-z_][A-Za-z0-9_]*").matches(index.name.trim())) throw BadRequestException("Index name \"${index.name}\" must be letters, digits and underscores")
+            if (index.expression.isBlank() || index.type.isBlank()) throw BadRequestException("Index ${index.name} needs an expression and a type")
+            if ((index.expression + index.type).contains(';')) throw BadRequestException("Index ${index.name} must be a single expression and type")
+        }
+        if (request.addIndexes.map { it.name.trim() }.distinct().size != request.addIndexes.size) throw BadRequestException("Two new indexes share a name")
 
         val id = synchronized(lock) {
             generateSequence { String.format("%04x", random.nextInt(0x10000)) }.first { candidate -> trials.none { it.id == candidate } }
@@ -652,7 +676,7 @@ class TrialService(
             val scanTimes = mutableMapOf<String, Pair<Double?, Double?>>()
             if (request.columnScans) {
                 enter(++step, 70)
-                val noCache = mapOf("use_query_cache" to "0")
+                val noCache = Explain.uncached(conn)
                 copied.forEachIndexed { i, c ->
                     fun scan(target: String): Double? = median(
                         (1..request.runsPerQuery).map {
@@ -672,14 +696,16 @@ class TrialService(
                 val facts = scans.snapshot(trial.sourceId)?.table(trial.database, trial.table)
                 val queries = facts?.queries.orEmpty().take(20)
                 val total = (facts?.queryTotal ?: 0).coerceAtLeast(1)
-                val settings = mapOf("use_query_cache" to "0", "max_execution_time" to "120")
+                val settings = Explain.uncached(conn) + mapOf("max_execution_time" to "120")
+                val planning = limits + Explain.planned(conn)
                 queries.forEachIndexed { i, q ->
                     var error: String? = null
+                    // A logged query may name a Buffer table in front of the production table instead.
+                    fun pointedAt(target: String) = facts?.buffers.orEmpty().fold(rewriteQuery(q.query, trial.database, trial.table, target)) { text, buffer ->
+                        rewriteQuery(text, buffer.substringBefore('.'), buffer.substringAfter('.'), target)
+                    }
                     fun replay(target: String): Pair<Double?, Long?> = try {
-                        // A logged query may name a Buffer table in front of the production table instead.
-                        val sql = facts?.buffers.orEmpty().fold(rewriteQuery(q.query, trial.database, trial.table, target)) { text, buffer ->
-                            rewriteQuery(text, buffer.substringBefore('.'), buffer.substringAfter('.'), target)
-                        }
+                        val sql = pointedAt(target)
                         val runs = (1..request.runsPerQuery).map { exec(sql, settings) }
                         median(runs.map { it.elapsedMs }.let { if (it.size >= 3) it.drop(1) else it }) to runs.last().readRows
                     } catch (e: ChException) {
@@ -688,12 +714,17 @@ class TrialService(
                     }
                     val (baseMs, baseRead) = replay(base)
                     val (candMs, candRead) = replay(cand)
-                    queryResults.add(TrialQueryResult("Q${i + 1}", q.normalized, q.count.toDouble() / total, baseMs, candMs, baseRead, candRead, error))
+                    // How ClickHouse plans the same query on each table: which indexes narrow it, and how far.
+                    val baseExplain = if (error == null) Explain.of(conn, pointedAt(base), "${trial.scratchDatabase}.${trial.baseTable}", settings = planning) else null
+                    val candExplain = if (error == null) Explain.of(conn, pointedAt(cand), "${trial.scratchDatabase}.${trial.candTable}", settings = planning) else null
+                    queryResults.add(
+                        TrialQueryResult("Q${i + 1}", q.normalized, q.count.toDouble() / total, baseMs, candMs, baseRead, candRead, error, baseExplain, candExplain),
+                    )
                     progress(85 + (i + 1) * 13 / queries.size)
                 }
                 say(
                     if (queries.isEmpty()) "No SELECTs for this table in query_log, so no queries were replayed"
-                    else "Replayed ${queries.size} queries × ${request.runsPerQuery} runs per table",
+                    else "Replayed ${queries.size} queries × ${request.runsPerQuery} runs per table and read their plans with EXPLAIN",
                 )
             }
 
@@ -814,14 +845,15 @@ class TrialService(
             """
             SELECT toInt64(sum(rows)) AS rows, toInt64(sum(data_compressed_bytes)) AS compressed,
                    toInt64(sum(data_uncompressed_bytes)) AS uncompressed, toInt64(sum(bytes_on_disk)) AS on_disk,
-                   toInt64(count()) AS parts, toInt64(sum(primary_key_bytes_in_memory)) AS pk
+                   toInt64(count()) AS parts, toInt64(sum(primary_key_bytes_in_memory)) AS pk,
+                   toInt64(sum(secondary_indices_compressed_bytes)) AS index_bytes
             FROM system.parts WHERE active AND $where
             """.trimIndent(),
         ) ?: emptyMap()
         val columns = ch.query(
             "SELECT name, toInt64(data_compressed_bytes) AS compressed, toInt64(data_uncompressed_bytes) AS uncompressed FROM system.columns WHERE $where",
         ).associate { it.str("name") to (it.long("compressed") to it.long("uncompressed")) }
-        return Sizes(row.long("rows"), row.long("compressed"), row.long("uncompressed"), row.long("on_disk"), row.long("parts"), row.long("pk"), columns)
+        return Sizes(row.long("rows"), row.long("compressed"), row.long("uncompressed"), row.long("on_disk"), row.long("parts"), row.long("pk"), columns, row.long("index_bytes"))
     }
 
     private fun buildResult(
@@ -884,6 +916,9 @@ class TrialService(
         }
         if (baseMergeMs != null && candMergeMs != null) {
             metrics.add(TrialMetric("merge", "Full merge (OPTIMIZE FINAL)", baseMergeMs, candMergeMs, "ms", true))
+        }
+        if (base.indexBytes > 0 || cand.indexBytes > 0) {
+            metrics.add(TrialMetric("indexes", "Skip indexes on disk", base.indexBytes.toDouble(), cand.indexBytes.toDouble(), "bytes", true))
         }
         metrics.add(TrialMetric("pk", "Primary key in memory", base.primaryKeyBytes.toDouble(), cand.primaryKeyBytes.toDouble(), "bytes", true))
 

@@ -1,7 +1,7 @@
 import { useId, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { Sampling, TrialPlan, TrialPlanColumn, TrialPlanRecommendation, TrialRequest } from '../api/types';
+import type { Sampling, TrialIndex, TrialPlan, TrialPlanColumn, TrialPlanRecommendation, TrialRequest } from '../api/types';
 import { useAction, useApi } from '../hooks/useApi';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
@@ -45,7 +45,11 @@ interface Schema {
   sortingKey: string;
   cols: Record<string, { type: string; codec: string }>;
   dropIndexes: string[];
+  addIndexes: TrialIndex[];
 }
+
+const INDEX_TYPES = ['minmax', 'set(100)', 'bloom_filter(0.01)', 'tokenbf_v1(8192, 3, 0)', 'ngrambf_v1(3, 8192, 3, 0)'];
+const EMPTY_INDEX: TrialIndex = { name: '', expression: '', type: 'set(100)', granularity: 4 };
 
 function applyRec(s: Schema, r: TrialPlanRecommendation): Schema {
   const next: Schema = { ...s, cols: { ...s.cols } };
@@ -56,6 +60,7 @@ function applyRec(s: Schema, r: TrialPlanRecommendation): Schema {
     next.cols[r.column.name] = { type: r.column.type ?? cur.type, codec: r.column.codec ?? cur.codec };
   }
   if (r.dropIndex != null && !next.dropIndexes.includes(r.dropIndex)) next.dropIndexes = [...next.dropIndexes, r.dropIndex];
+  if (r.addIndex && !next.addIndexes.some((i) => i.name === r.addIndex!.name)) next.addIndexes = [...next.addIndexes, r.addIndex];
   return next;
 }
 
@@ -74,13 +79,17 @@ function revertRec(s: Schema, r: TrialPlanRecommendation, plan: TrialPlan): Sche
     }
   }
   if (r.dropIndex != null) next.dropIndexes = next.dropIndexes.filter((i) => i !== r.dropIndex);
+  if (r.addIndex) next.addIndexes = next.addIndexes.filter((i) => i.name !== r.addIndex!.name);
   return next;
 }
+
+/** A new skip index is a hypothesis, not a finding with a size estimate: it waits to be ticked. */
+const startsTicked = (r: TrialPlanRecommendation) => r.addIndex == null;
 
 function initialSchema(plan: TrialPlan): Schema {
   const cols: Schema['cols'] = {};
   for (const c of plan.columns) cols[c.name] = { type: c.suggestedType, codec: c.suggestedCodec };
-  return plan.recommendations.reduce(applyRec, { partitionKey: plan.partitionKey, sortingKey: plan.sortingKey, cols, dropIndexes: [] });
+  return plan.recommendations.filter(startsTicked).reduce(applyRec, { partitionKey: plan.partitionKey, sortingKey: plan.sortingKey, cols, dropIndexes: [], addIndexes: [] });
 }
 
 export function TrialSetupPage() {
@@ -137,7 +146,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
   const navigate = useNavigate();
   const start = useAction();
   const [schema, setSchema] = useState<Schema>(() => initialSchema(plan));
-  const [ticked, setTicked] = useState<string[]>(() => plan.recommendations.map((r) => r.id));
+  const [ticked, setTicked] = useState<string[]>(() => plan.recommendations.filter(startsTicked).map((r) => r.id));
   const [name, setName] = useState(`Trial of ${plan.table}`);
   const [rows, setRows] = useState(() => fmtInt(Math.min(plan.recommendedRows, plan.totalRows || plan.recommendedRows)));
   const [sampling, setSampling] = useState<Sampling>('even');
@@ -151,6 +160,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
   const [extra, setExtra] = useState<string[]>([]);
   const [adding, setAdding] = useState('');
   const [showAll, setShowAll] = useState(false);
+  const [draft, setDraft] = useState<TrialIndex>(EMPTY_INDEX);
 
   function toggleRec(rec: TrialPlanRecommendation, on: boolean) {
     const nextTicked = on ? [...ticked, rec.id] : ticked.filter((id) => id !== rec.id);
@@ -176,13 +186,14 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
   const scratchNeeded = plan.totalRows > 0 ? effectiveRows * (plan.compressedBytes / plan.totalRows) * 2 : 0;
   const noSpace = plan.scratchFreeBytes != null && scratchNeeded > plan.scratchFreeBytes;
   const runsN = Math.max(1, parseInt(runs, 10) || 1);
-  const nothingChanged = changedKeys === 0 && changedCols.length === 0 && schema.dropIndexes.length === 0;
+  const nothingChanged = changedKeys === 0 && changedCols.length === 0 && schema.dropIndexes.length === 0 && schema.addIndexes.length === 0;
   const canStart = plan.trialsEnabled && n > 0 && !nothingChanged && name.trim() !== '' && (sampling !== 'where' || where.trim() !== '');
 
   const changes = [
     changedKeys ? `${changedKeys} ${changedKeys === 1 ? 'key' : 'keys'}` : null,
     changedCols.length ? `${changedCols.length} ${changedCols.length === 1 ? 'column' : 'columns'}` : null,
     schema.dropIndexes.length ? `${schema.dropIndexes.length} ${schema.dropIndexes.length === 1 ? 'index' : 'indexes'} dropped` : null,
+    schema.addIndexes.length ? `${schema.addIndexes.length} ${schema.addIndexes.length === 1 ? 'index' : 'indexes'} added` : null,
   ].filter(Boolean);
 
   async function submit() {
@@ -195,6 +206,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
       sortingKey: schema.sortingKey.trim(),
       columns: plan.columns.map((c) => ({ name: c.name, type: schema.cols[c.name].type, codec: schema.cols[c.name].codec })),
       dropIndexes: schema.dropIndexes,
+      addIndexes: schema.addIndexes,
       rows: effectiveRows,
       sampling,
       where: sampling === 'where' ? where.trim() : null,
@@ -342,13 +354,14 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
             </div>
           ) : null}
 
-          {plan.indexDetails.length ? (
-            <div className="stack" style={vars({ gap: 8 })}>
-              <h3 className="subhead">Skip indexes</h3>
-              <p className="body-sm muted">
-                {fmtInt(plan.indexDetails.length)} {plan.indexDetails.length === 1 ? 'index' : 'indexes'}, {fmtBytes(indexBytes)} compressed. Drop one in the candidate to
-                see what it costs on inserts and saves on reads.
-              </p>
+          <div className="stack" style={vars({ gap: 8 })}>
+            <h3 className="subhead">Skip indexes</h3>
+            <p className="body-sm muted">
+              {plan.indexDetails.length
+                ? `${fmtInt(plan.indexDetails.length)} ${plan.indexDetails.length === 1 ? 'index' : 'indexes'}, ${fmtBytes(indexBytes)} compressed. Drop one in the candidate to see what it costs on inserts and saves on reads, or add one to see whether it prunes.`
+                : 'This table has none. Add one to the candidate to see whether it prunes: the result shows the granules each replayed query reads with and without it.'}
+            </p>
+            {plan.indexDetails.length || schema.addIndexes.length ? (
               <div style={{ overflowX: 'auto' }}>
                 <table className="g-tbl" style={{ minWidth: 640 }}>
                   <thead>
@@ -381,11 +394,72 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
                         </td>
                       </tr>
                     ))}
+                    {schema.addIndexes.map((idx) => (
+                      <tr key={`new-${idx.name}`}>
+                        <td className="g-strong">
+                          <span className="row" style={vars({ gap: 8 })}>
+                            {idx.name}
+                            <span className="g-count">new</span>
+                          </span>
+                        </td>
+                        <td className="g-mono g-wrap">{idx.expression}</td>
+                        <td className="g-mono">
+                          {idx.type} · granularity {idx.granularity}
+                        </td>
+                        <td className="r">—</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="cc-btn cc-btn--link"
+                            onClick={() => {
+                              setSchema((s) => ({ ...s, addIndexes: s.addIndexes.filter((i) => i.name !== idx.name) }));
+                              setTicked((t) => t.filter((id) => plan.recommendations.find((r) => r.id === id)?.addIndex?.name !== idx.name));
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
+            ) : null}
+            <div className="row" style={{ alignItems: 'flex-end', ...vars({ gap: 12 }) }}>
+              <DraftField label="Index name" width={170} value={draft.name} placeholder="idx_country" onChange={(v) => setDraft({ ...draft, name: v })} />
+              <DraftField label="Expression" width={220} value={draft.expression} placeholder="country" onChange={(v) => setDraft({ ...draft, expression: v })} />
+              <DraftField label="Type" width={200} value={draft.type} list="index-types" onChange={(v) => setDraft({ ...draft, type: v })} />
+              <DraftField
+                label="Granularity"
+                width={110}
+                value={String(draft.granularity)}
+                type="number"
+                onChange={(v) => setDraft({ ...draft, granularity: Math.max(1, parseInt(v, 10) || 1) })}
+              />
+              <Button
+                variant="dark"
+                disabled={
+                  !/^[A-Za-z_][A-Za-z0-9_]*$/.test(draft.name.trim()) ||
+                  !draft.expression.trim() ||
+                  !draft.type.trim() ||
+                  schema.addIndexes.some((i) => i.name === draft.name.trim()) ||
+                  plan.indexes.includes(draft.name.trim())
+                }
+                onClick={() => {
+                  const index = { ...draft, name: draft.name.trim(), expression: draft.expression.trim(), type: draft.type.trim() };
+                  setSchema((s) => ({ ...s, addIndexes: [...s.addIndexes, index] }));
+                  setDraft(EMPTY_INDEX);
+                }}
+              >
+                Add index
+              </Button>
             </div>
-          ) : null}
+            <datalist id="index-types">
+              {INDEX_TYPES.map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
+          </div>
           <datalist id="codec-encodings">
             {ENCODINGS.map((e) => (
               <option key={e} value={e} />
@@ -483,6 +557,45 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
         </Button>
         <InlineError message={start.error} />
       </Card>
+    </div>
+  );
+}
+
+function DraftField({
+  label,
+  value,
+  onChange,
+  width,
+  placeholder,
+  list,
+  type,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  width: number;
+  placeholder?: string;
+  list?: string;
+  type?: string;
+}) {
+  const id = useId();
+  return (
+    <div className="cc-field" style={{ flex: `1 1 ${width}px`, maxWidth: width * 1.6 }}>
+      <label htmlFor={id} className="cc-field__label">
+        {label}
+      </label>
+      <input
+        id={id}
+        className="cc-field__input cc-field__input--sm"
+        type={type}
+        min={type === 'number' ? 1 : undefined}
+        list={list}
+        placeholder={placeholder}
+        spellCheck={false}
+        autoComplete="off"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
     </div>
   );
 }

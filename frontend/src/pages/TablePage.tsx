@@ -1,7 +1,9 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
+import type { TableIndexUsage } from '../api/types';
 import { useApi } from '../hooks/useApi';
+import { Button } from '../components/Button';
 import { useSources } from '../state/sources';
 import { Card, StatTile } from '../components/Card';
 import { BytesChart } from '../components/BytesChart';
@@ -27,6 +29,25 @@ export function TablePage() {
   useEffect(() => {
     if (sourceId && sourceId !== selectedId && sources.some((s) => s.id === sourceId)) select(sourceId);
   }, [sourceId, selectedId, sources, select]);
+
+  const [usage, setUsage] = useState<TableIndexUsage | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  useEffect(() => {
+    setUsage(null);
+    setUsageError(null);
+  }, [sourceId, database, table]);
+  async function checkIndexes() {
+    setChecking(true);
+    setUsageError(null);
+    try {
+      setUsage(await api.indexUsage(sourceId, database, table));
+    } catch (e) {
+      setUsageError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setChecking(false);
+    }
+  }
 
   if (error && !t) {
     return (
@@ -211,7 +232,16 @@ export function TablePage() {
       ) : null}
 
       <section className="stack">
-        <h2 className="card-title">Data skipping indexes</h2>
+        <div className="between" style={{ alignItems: 'center' }}>
+          <h2 className="card-title">Data skipping indexes</h2>
+          {t.indexes.length ? (
+            <Button variant="secondary" small busy={checking} onClick={() => void checkIndexes()}>
+              {checking ? 'Checking…' : usage ? 'Check again' : 'Check against the query log'}
+            </Button>
+          ) : null}
+        </div>
+        {usageError ? <p className="g-notice g-wrap">{usageError}</p> : null}
+        {usage?.message ? <p className="g-notice">{usage.message}</p> : null}
         {t.indexes.length ? (
           <Card table>
             <table className="g-tbl">
@@ -223,25 +253,61 @@ export function TablePage() {
                   <th className="r">Granularity</th>
                   <th className="r">Compressed</th>
                   <th className="r">Uncompressed</th>
+                  {usage && !usage.message ? (
+                    <>
+                      <th className="r">Used by</th>
+                      <th style={{ width: '18%' }}>Granules dropped</th>
+                    </>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
-                {t.indexes.map((i) => (
-                  <tr key={i.name}>
-                    <td className="g-strong">{i.name}</td>
-                    <td className="g-mono">{i.expression}</td>
-                    <td className="g-mono">{i.type}</td>
-                    <td className="r">{fmtInt(i.granularity)}</td>
-                    <td className="r g-strong nowrap">{fmtBytes(i.compressedBytes)}</td>
-                    <td className="r nowrap">{fmtBytes(i.uncompressedBytes)}</td>
-                  </tr>
-                ))}
+                {t.indexes.map((i) => {
+                  const u = usage?.indexes.find((x) => x.name === i.name);
+                  const dropped = u && u.granulesBefore > 0 ? 1 - u.granulesAfter / u.granulesBefore : 0;
+                  return (
+                    <tr key={i.name}>
+                      <td className="g-strong">{i.name}</td>
+                      <td className="g-mono">{i.expression}</td>
+                      <td className="g-mono">{i.type}</td>
+                      <td className="r">{fmtInt(i.granularity)}</td>
+                      <td className="r g-strong nowrap">{fmtBytes(i.compressedBytes)}</td>
+                      <td className="r nowrap">{fmtBytes(i.uncompressedBytes)}</td>
+                      {usage && !usage.message ? (
+                        <>
+                          <td className="r nowrap">{u && u.shapes > 0 ? `${fmtPct(u.share, 0)} of SELECTs` : 'no logged query'}</td>
+                          <td>
+                            {u && u.shapes > 0 ? (
+                              <div className="share">
+                                <div className="g-track">
+                                  <div className="g-fill" style={{ width: `${Math.min(100, dropped * 100)}%` }} />
+                                </div>
+                                <span className="g-num ink" style={{ width: 36, textAlign: 'right' }}>
+                                  {fmtPct(dropped, 0)}
+                                </span>
+                              </div>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                        </>
+                      ) : null}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </Card>
         ) : (
           <p className="body-sm muted">This table has no data skipping indexes.</p>
         )}
+        {usage && !usage.message ? (
+          <p className="caption muted">
+            Planned {fmtInt(usage.checkedShapes)} logged query {usage.checkedShapes === 1 ? 'shape' : 'shapes'} with EXPLAIN indexes = 1, standing for{' '}
+            {fmtInt(usage.selects)} SELECTs{usage.failedShapes ? `; ${fmtInt(usage.failedShapes)} could not be planned` : ''}. “Granules dropped” is what an index
+            removed from the granules the earlier indexes left over. An index no logged query uses, or one that drops nothing, only costs inserts and disk.
+          </p>
+        ) : null}
       </section>
     </>
   );

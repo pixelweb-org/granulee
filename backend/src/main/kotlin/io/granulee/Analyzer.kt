@@ -163,7 +163,9 @@ object Analyzer {
     fun analyze(t: TableFacts, queryLogWindowDays: Int): List<Finding> {
         val out = mutableListOf<Finding>()
         partitioning(t)?.let(out::add)
-        sortingKey(t, queryLogWindowDays)?.let(out::add)
+        val keyFinding = sortingKey(t, queryLogWindowDays)
+        keyFinding?.let(out::add)
+        out.addAll(newSkipIndexes(t, queryLogWindowDays, keyFinding?.rec?.column))
         t.columns.forEach { column(t, it)?.let(out::add) }
         nullable(t)?.let(out::add)
         t.indexes.forEach { skipIndex(t, it)?.let(out::add) }
@@ -432,6 +434,76 @@ object Analyzer {
         )
     }
 
+    /** How a query filters on a column, read off the text after WHERE: "eq", "range", "has". */
+    internal fun predicates(filter: String, column: String): Set<String> {
+        val c = "(?<![\\w.`])`?" + Regex.escape(column) + "`?(?![\\w(`])"
+        val found = mutableSetOf<String>()
+        if (Regex("$c\\s*(==?(?!=)|IN\\b)", RegexOption.IGNORE_CASE).containsMatchIn(filter)) found.add("eq")
+        if (Regex("$c\\s*(>=?|<=?(?!>)|BETWEEN\\b)", RegexOption.IGNORE_CASE).containsMatchIn(filter)) found.add("range")
+        if (Regex("\\bhas(Any|All)?\\(\\s*$c", RegexOption.IGNORE_CASE).containsMatchIn(filter)) found.add("has")
+        return found
+    }
+
+    /** The skip index type that fits how a column is filtered, or null when none does. */
+    internal fun skipIndexType(c: ColumnFacts, predicates: Set<String>): String? {
+        val fewValues = Types.isLowCardinality(c.type) || Types.base(c.type) == "Bool" || (c.cardinality != null && c.cardinality <= 10_000)
+        return when {
+            // Dates and times follow the insert order closely enough that their range per granule says it all.
+            Types.isTime(c.type) && ("eq" in predicates || "range" in predicates) -> "minmax"
+            "has" in predicates && c.type.startsWith("Array(") -> "bloom_filter(0.01)"
+            "eq" in predicates && fewValues -> "set(100)"
+            "eq" in predicates -> "bloom_filter(0.01)"
+            "range" in predicates && (Types.isInteger(c.type) || Types.isFloat(c.type) || Types.isTime(c.type)) -> "minmax"
+            else -> null
+        }
+    }
+
+    /**
+     * Columns outside the sorting key that many logged SELECTs filter on: candidates for a skip index.
+     * Whether one prunes anything depends on how the values lie along the sort order, so these are
+     * proposals for a trial, never savings.
+     */
+    private fun newSkipIndexes(t: TableFacts, windowDays: Int, keyColumn: String?): List<Finding> {
+        val total = t.queryTotal ?: return emptyList()
+        if (total < 20 || t.queries.isEmpty()) return emptyList()
+        val filters = t.queries.map { filterText(it.normalized) to it }
+        return t.columns
+            .filter { !it.inSortingKey && it.defaultKind != "ALIAS" && it.name != keyColumn && t.indexes.none { index -> mentions(index.expression, it.name) } }
+            .mapNotNull { c ->
+                val using = filters.filter { mentions(it.first, c.name) }
+                val share = using.sumOf { it.second.count }.toDouble() / total
+                if (share < 0.1) return@mapNotNull null
+                val type = skipIndexType(c, using.flatMap { predicates(it.first, c.name) }.toSet()) ?: return@mapNotNull null
+                Triple(c, share, type) to using
+            }
+            .sortedByDescending { it.first.second }
+            .take(3)
+            .map { (found, using) ->
+                val (c, share, type) = found
+                val index = TrialIndex("idx_" + c.name.replace(Regex("[^A-Za-z0-9_]"), "_"), Sql.id(c.name), type, 4)
+                val table = Sql.table(t.database, t.name)
+                Finding(
+                    Recommendation(
+                        id = "add-index:${c.name}",
+                        severity = "review",
+                        category = "Skip index",
+                        changeKind = "mutation",
+                        title = "Try a ${type.substringBefore('(')} skip index on ${c.name}",
+                        body = "${Fmt.percent(share)} of ${Fmt.count(total)} SELECTs in the last $windowDays days filter on ${c.name}, which is not in " +
+                            "the sorting key, so the primary index cannot narrow them by it. A skip index lets ClickHouse pass over granules " +
+                            "that cannot match, but only if the values are clustered along the sort order. That depends on the data: " +
+                            "a trial replays these queries and shows the granules read with and without the index.",
+                        effect = "fewer granules read for ${Fmt.percent(share)} of SELECTs, if it prunes · measure in a trial",
+                        sql = "ALTER TABLE $table\n  ADD ${indexSql(index)};\nALTER TABLE $table\n  MATERIALIZE INDEX ${Sql.id(index.name)};",
+                        savingsBytes = 0,
+                        column = c.name,
+                        queries = using.map { QueryEvidence(it.second.normalized, it.second.count, it.second.count.toDouble() / total) },
+                    ),
+                    TrialPlanRecommendation("add-index:${c.name}", "Add ${type.substringBefore('(')} index on ${c.name}", addIndex = index),
+                )
+            }
+    }
+
     private fun skipIndex(t: TableFacts, index: IndexFacts): Finding? {
         if (index.compressedBytes < MIB || index.compressedBytes < t.compressedBytes / 100) return null
         return Finding(
@@ -442,8 +514,8 @@ object Analyzer {
                 changeKind = "online",
                 title = "Check whether ${index.name} earns its size",
                 body = "The ${index.type} index on ${index.expression} takes ${Fmt.bytes(index.compressedBytes)} and is written on every " +
-                    "insert. System tables do not record how often an index prunes granules: run your frequent queries with " +
-                    "EXPLAIN indexes = 1, and drop it if it rarely helps.",
+                    "insert. System tables do not record how often an index prunes granules. The table's Structure page can check it " +
+                    "against the logged queries with EXPLAIN; drop it if it rarely helps.",
                 effect = "−${Fmt.bytes(index.compressedBytes)} on disk · faster inserts",
                 sql = "ALTER TABLE ${Sql.table(t.database, t.name)} DROP INDEX ${Sql.id(index.name)};",
                 savingsBytes = index.compressedBytes,

@@ -8,8 +8,13 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
   codecs, data types and skip indexes. Savings are estimates.
 - **Usage** shows how a table was queried, from `system.query_log`: SELECT and INSERT volume, which
   columns are read and filtered on, the most frequent query shapes and who runs them.
+- **Skip indexes** are measured, not guessed: the table page plans the logged queries with
+  `EXPLAIN indexes = 1` and shows what each existing index drops. Columns that many queries filter on
+  outside the sorting key become proposals for a new index, which a trial then tests.
 - **Trials** build a baseline and a candidate table in a scratch database, copy the same sample of
   rows into both, merge them, and compare sizes, column scans, insert throughput and replayed queries.
+  Each replayed query is also planned with `EXPLAIN` on both tables, so the result shows which indexes
+  narrowed it, the granules read and the read streams.
   The result also shows the statements that would apply the candidate to the production table:
   `ALTER TABLE` for column, codec and index changes, a rebuild script when a key changes.
   "Apply to production" on a finished trial shows those statements again, computed against the table as

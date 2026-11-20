@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { Trial, TrialMetric, TrialResult } from '../api/types';
+import type { IndexStep, QueryExplain, Trial, TrialMetric, TrialResult } from '../api/types';
 import { useApi, usePolling } from '../hooks/useApi';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
@@ -30,6 +30,138 @@ import {
   fmtTime,
 } from '../lib/format';
 import { vars } from '../lib/style';
+
+const STEP_KIND: Record<IndexStep['kind'], string> = { minmax: 'Min-max', partition: 'Partition', primary: 'Primary key', skip: 'Skip index' };
+
+/** Did the skip indexes this trial added prune anything? Summed over the replayed queries' plans on the candidate. */
+function NewIndexes({ trial, result }: { trial: Trial; result: TrialResult }) {
+  const added = trial.request.addIndexes ?? [];
+  if (!added.length || !result.queries.some((q) => q.candExplain)) return null;
+  const rows = added.map((index) => {
+    const used = result.queries.flatMap((q) => (q.candExplain?.steps ?? []).filter((s) => s.kind === 'skip' && s.name === index.name).map((s) => ({ q, s })));
+    const before = used.reduce((a, u) => a + u.s.granulesBefore, 0);
+    const after = used.reduce((a, u) => a + u.s.granulesAfter, 0);
+    return { index, queries: used.map((u) => u.q.label), share: used.reduce((a, u) => a + u.q.share, 0), before, after, dropped: before > 0 ? 1 - after / before : 0 };
+  });
+  return (
+    <div className="stack" style={vars({ gap: 8 })}>
+      <h3 className="subhead">Do the new skip indexes prune?</h3>
+      <Card table>
+        <table className="g-tbl">
+          <thead>
+            <tr>
+              <th>Index</th>
+              <th>Type</th>
+              <th>Used by</th>
+              <th className="r">Granules in → out</th>
+              <th style={{ width: '20%' }}>Granules dropped</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ index, queries, share, before, after, dropped }) => (
+              <tr key={index.name}>
+                <td className="g-strong">{index.name}</td>
+                <td className="g-mono">{index.type}</td>
+                <td>{queries.length ? `${queries.join(', ')} · ${fmtPct(share, 0)} of the workload` : 'no replayed query'}</td>
+                <td className="r nowrap">{queries.length ? `${fmtInt(before)} → ${fmtInt(after)}` : '—'}</td>
+                <td>
+                  {queries.length ? (
+                    <div className="share">
+                      <div className="g-track">
+                        <div className="g-fill" style={{ width: `${Math.min(100, dropped * 100)}%` }} />
+                      </div>
+                      <span className="g-num ink" style={{ width: 36, textAlign: 'right' }}>
+                        {fmtPct(dropped, 0)}
+                      </span>
+                    </div>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+      <p className="caption muted">
+        From EXPLAIN on the candidate, summed over the replayed queries. An index that drops nothing costs insert time and disk for no gain on this sample.
+      </p>
+    </div>
+  );
+}
+
+/** What EXPLAIN says about one replayed query on each table: every index that narrowed the read, and the read streams. */
+function QueryPlans({ base, cand }: { base: QueryExplain | null; cand: QueryExplain | null }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="stack" style={vars({ gap: 12 })}>
+      <button type="button" className="cc-btn cc-btn--link" style={{ alignSelf: 'flex-start' }} aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? 'Hide the plans' : 'Show how each table plans it'}
+      </button>
+      {open ? (
+        <div className="grid-auto" style={vars({ min: 360, gap: 24 })}>
+          <PlanSide title="Baseline" plan={base} />
+          <PlanSide title="Candidate" plan={cand} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PlanSide({ title, plan }: { title: string; plan: QueryExplain | null }) {
+  if (!plan) return null;
+  return (
+    <div className="stack" style={vars({ gap: 8 })}>
+      <p className="eyebrow">
+        {title}
+        {plan.streams != null ? ` · ${plan.streams} read ${plan.streams === 1 ? 'stream' : 'streams'}` : ''}
+      </p>
+      {plan.error ? (
+        <p className="body-sm muted g-wrap">EXPLAIN failed: {plan.error}</p>
+      ) : plan.steps.length ? (
+        <table className="g-tbl">
+          <thead>
+            <tr>
+              <th>Index</th>
+              <th className="r">Parts</th>
+              <th className="r">Granules</th>
+            </tr>
+          </thead>
+          <tbody>
+            {plan.steps.map((s, i) => (
+              <tr key={i}>
+                <td>
+                  <span className="ink" style={{ fontWeight: 700 }}>
+                    {STEP_KIND[s.kind]}
+                  </span>
+                  <div className="g-mono g-wrap">{s.name}</div>
+                </td>
+                <td className="r nowrap">
+                  {fmtInt(s.partsBefore)} → {fmtInt(s.partsAfter)}
+                </td>
+                <td className={`r nowrap${s.granulesAfter < s.granulesBefore ? ' g-strong' : ''}`}>
+                  {fmtInt(s.granulesBefore)} → {fmtInt(s.granulesAfter)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="body-sm muted">No index narrows this query: it reads every granule.</p>
+      )}
+      {plan.pipeline ? (
+        <details>
+          <summary className="body-sm g-act" style={{ cursor: 'pointer' }}>
+            EXPLAIN PIPELINE
+          </summary>
+          <pre className="g-code" style={{ marginTop: 8 }}>
+            {plan.pipeline}
+          </pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
 
 function metricValue(m: TrialMetric): string {
   switch (m.unit) {
@@ -388,6 +520,7 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
               />
             ) : null}
           </div>
+          <NewIndexes trial={trial} result={r} />
           {r.queries.length ? (
             <ol className="stack" style={{ listStyle: 'none', margin: 0, padding: 0, ...vars({ gap: 12 }) }}>
               {r.queries.map((q) => {
@@ -419,6 +552,15 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
                           <dt className="eyebrow">Rows read</dt>
                           <dd>{q.baseReadRows != null && q.candReadRows != null ? `${fmtRows(q.baseReadRows)} → ${fmtRows(q.candReadRows)}` : '—'}</dd>
                         </div>
+                        {q.baseExplain?.granulesRead != null && q.candExplain?.granulesRead != null ? (
+                          <div>
+                            <dt className="eyebrow">Granules read</dt>
+                            <dd>
+                              {fmtInt(q.baseExplain.granulesRead)} → {fmtInt(q.candExplain.granulesRead)}
+                              {q.candExplain.granulesTotal ? <span className="muted"> of {fmtInt(q.candExplain.granulesTotal)}</span> : null}
+                            </dd>
+                          </div>
+                        ) : null}
                       </dl>
                       {q.error ? (
                         <span className="status body-sm g-wrap">
@@ -432,6 +574,7 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
                         </span>
                       ) : null}
                     </div>
+                    {q.baseExplain || q.candExplain ? <QueryPlans base={q.baseExplain} cand={q.candExplain} /> : null}
                   </li>
                 );
               })}

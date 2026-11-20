@@ -228,6 +228,14 @@ export interface TrialPlanColumn {
   compressedBytes: number;
 }
 
+/** A skip index the candidate gets on top of the production ones. */
+export interface TrialIndex {
+  name: string;
+  expression: string;
+  type: string; // minmax, set(100), bloom_filter(0.01), …
+  granularity: number;
+}
+
 export interface TrialPlanRecommendation {
   id: string;
   label: string;
@@ -235,6 +243,7 @@ export interface TrialPlanRecommendation {
   sortingKey: string | null;
   column: { name: string; type: string | null; codec: string | null } | null;
   dropIndex: string | null;
+  addIndex: TrialIndex | null;
 }
 
 export interface TrialPlan {
@@ -268,6 +277,7 @@ export interface TrialRequest {
   sortingKey: string;
   columns: { name: string; type: string; codec: string }[]; // every column; codec "" = server default
   dropIndexes: string[];
+  addIndexes: TrialIndex[];
   rows: number;
   sampling: Sampling;
   where: string | null;
@@ -317,6 +327,46 @@ export interface TrialQueryResult {
   baseReadRows: number | null;
   candReadRows: number | null;
   error: string | null;
+  baseExplain: QueryExplain | null; // how the indexes narrowed the read, from EXPLAIN
+  candExplain: QueryExplain | null;
+}
+
+export interface IndexStep {
+  kind: 'minmax' | 'partition' | 'primary' | 'skip';
+  name: string; // the skip index's name, otherwise the key expressions
+  condition: string | null;
+  partsBefore: number;
+  partsAfter: number;
+  granulesBefore: number;
+  granulesAfter: number;
+}
+
+export interface QueryExplain {
+  steps: IndexStep[];
+  granulesTotal: number | null;
+  granulesRead: number | null;
+  partsRead: number | null;
+  streams: number | null; // parallel read streams
+  pipeline: string | null; // EXPLAIN PIPELINE text
+  error: string | null;
+}
+
+/** What the skip indexes did for the logged queries, measured with EXPLAIN on the production table. */
+export interface TableIndexUsage {
+  checkedShapes: number;
+  failedShapes: number;
+  selects: number;
+  message: string | null;
+  indexes: {
+    name: string;
+    expression: string;
+    type: string;
+    compressedBytes: number;
+    shapes: number;
+    share: number; // 0..1 of the table's SELECTs
+    granulesBefore: number;
+    granulesAfter: number;
+  }[];
 }
 
 export interface TrialResult {
