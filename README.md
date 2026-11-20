@@ -44,33 +44,33 @@ unset, a key file created in the data directory.
 Needs JDK 21 and Node 22 or newer.
 
 ```bash
-cd backend && ./gradlew bootRun
+make dev
 ```
 
-```bash
-cd frontend && npm install && npm run dev
-```
+That starts the backend on http://localhost:8080 and the frontend dev server on
+http://localhost:5173, which proxies `/api` to the backend. Ctrl+C stops both. Open
+http://localhost:5173 and add a server under **Data sources**.
 
-Open http://localhost:5173 and add a server under **Data sources**. The dev server proxies `/api`
-to `http://localhost:8080`.
-
-One jar with the frontend inside:
-
-```bash
-cd backend && ./gradlew bootJar -PwithFrontend
-```
+`make` lists the other targets: `make backend` and `make frontend` start one of the two,
+`make test` runs the tests, `make build` makes one jar with the frontend inside and `make image`
+the container image.
 
 ## A local ClickHouse to try it on
 
 ```bash
-docker run -d --name granulee-test-ch -p 127.0.0.1:18123:8123 -e CLICKHOUSE_USER=granulee_test -e CLICKHOUSE_PASSWORD=granulee_test -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 clickhouse/clickhouse-server:25.8
+make clickhouse seed
 ```
+
+This starts a ClickHouse 25.8 container on port 18123 and fills it with a sample schema that has
+findings, including a query-log workload. With Granulee running, register it as a source:
 
 ```bash
-dev/seed.sh
+make source
 ```
 
-Then add a source: HTTP, `localhost`, port `18123`, user and password `granulee_test`, trials allowed.
+Or add it by hand: HTTP, `localhost`, port `18123`, user and password `granulee_test`, trials
+allowed. `make stop` stops the container; `make clean` removes it together with Granulee's local
+state in `backend/data`.
 
 ## ClickHouse user
 
