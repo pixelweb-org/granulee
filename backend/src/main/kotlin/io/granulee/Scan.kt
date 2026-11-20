@@ -46,6 +46,9 @@ internal fun fileFacts(ch: ChConnection, where: String): Map<Pair<String, String
     emptyMap()
 }
 
+/** Granulee's own scans and trial copies are not how the table is used. */
+internal const val NOT_GRANULEE = "NOT startsWith(http_user_agent, 'granulee ')"
+
 // checksums, columns, count, primary index, partition and the like
 private const val FILES_PER_PART = 10
 
@@ -313,7 +316,7 @@ class ScanService(
             FROM (
                 SELECT arrayJoin(tables) AS t, normalized_query_hash AS h, any(query) AS q, count() AS c
                 FROM system.query_log
-                WHERE event_date >= today() - $days AND type = 'QueryFinish' AND query_kind = 'Select' AND is_initial_query
+                WHERE event_date >= today() - $days AND type = 'QueryFinish' AND query_kind = 'Select' AND is_initial_query AND $NOT_GRANULEE
                 GROUP BY t, h
             )
             WHERE NOT startsWith(t, 'system.')

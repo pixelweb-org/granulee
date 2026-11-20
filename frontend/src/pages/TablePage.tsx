@@ -62,6 +62,9 @@ export function TablePage() {
         actions={
           <>
             <CopyButton text={t.createQuery}>Copy DDL</CopyButton>
+            <Button variant="secondary" to={routes.usage(sourceId, database, table)}>
+              Usage
+            </Button>
             <Button to={recsTo}>{t.findings > 0 ? `View ${fmtInt(t.findings)} ${t.findings === 1 ? 'recommendation' : 'recommendations'}` : 'Recommendations'}</Button>
           </>
         }

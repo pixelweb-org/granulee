@@ -143,6 +143,12 @@ fun splitTopLevel(expression: String): List<String> {
 fun mentions(text: String, column: String): Boolean =
     Regex("(?<![\\w.`])`?" + Regex.escape(column) + "`?(?![\\w(`])").containsMatchIn(text)
 
+/** A query from its first WHERE or PREWHERE on: where a column has to appear to count as filtered on. */
+fun filterText(query: String): String {
+    val at = Regex("\\b(PRE)?WHERE\\b", RegexOption.IGNORE_CASE).find(query)?.range?.first
+    return if (at == null) "" else query.substring(at)
+}
+
 /**
  * The rules. Each one looks at sizes, types, codecs and keys from system tables, plus the most
  * frequent SELECTs from query_log. Savings are estimates until a trial measures them.
@@ -259,11 +265,7 @@ object Analyzer {
         if (total < 20 || t.queries.isEmpty()) return null
         val keyParts = splitTopLevel(t.sortingKey)
         val first = keyParts.firstOrNull() ?: return null
-        val wheres = t.queries.map { q ->
-            val text = q.normalized
-            val at = Regex("\\b(PRE)?WHERE\\b", RegexOption.IGNORE_CASE).find(text)?.range?.first
-            (if (at == null) "" else text.substring(at)) to q
-        }
+        val wheres = t.queries.map { q -> filterText(q.normalized) to q }
         fun share(column: String): Double =
             wheres.filter { mentions(it.first, column) }.sumOf { it.second.count }.toDouble() / total
         val firstColumns = t.columns.filter { mentions(first, it.name) }.map { it.name }

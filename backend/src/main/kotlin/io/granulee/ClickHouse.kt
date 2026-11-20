@@ -24,6 +24,11 @@ fun Row.longOrNull(key: String): Long? = when (val v = this[key]) {
     is String -> v.toLongOrNull()
     else -> null
 }
+fun Row.double(key: String): Double = when (val v = this[key]) {
+    is Number -> v.toDouble().takeIf { it.isFinite() } ?: 0.0
+    is String -> v.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0
+    else -> 0.0
+}
 fun Row.bool(key: String): Boolean = when (val v = this[key]) {
     is Boolean -> v
     is Number -> v.toInt() != 0
