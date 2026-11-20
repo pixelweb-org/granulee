@@ -353,6 +353,59 @@ export interface Trial {
   result: TrialResult | null;
   log: { at: string; message: string }[];
   apply: TrialApply | null; // the last time the candidate was applied to production
+  optimize: TrialOptimize | null; // the last OPTIMIZE … FINAL of the production table started here
+}
+
+/** How a table was used in the source's query-log window, read from system.query_log. */
+export interface TableUsage {
+  sourceId: string;
+  sourceName: string;
+  database: string;
+  table: string;
+  windowDays: number;
+  available: boolean; // false: query_log cannot be read
+  message: string | null;
+  logSince: string | null; // oldest log entry inside the window
+  selects: number;
+  inserts: number;
+  otherQueries: number;
+  readRows: number;
+  readBytes: number;
+  writtenRows: number;
+  writtenBytes: number;
+  selectMedianMs: number;
+  selectP95Ms: number;
+  tableRows: number;
+  wideScans: number; // SELECTs that read at least half of the table's rows
+  days: { day: string; selects: number; inserts: number }[];
+  queries: UsageQuery[]; // up to 40 SELECT shapes, most frequent first
+  columns: UsageColumn[]; // most read first
+  unreadColumns: string[];
+  unreadBytes: number;
+  users: { user: string; selects: number; inserts: number }[];
+}
+
+export interface UsageQuery {
+  query: string; // normalized
+  count: number;
+  share: number; // 0..1 of the table's SELECTs
+  medianMs: number;
+  p95Ms: number;
+  totalMs: number;
+  avgReadRows: number;
+  avgReadBytes: number;
+  avgResultRows: number;
+  lastSeen: string;
+}
+
+export interface UsageColumn {
+  name: string;
+  type: string;
+  compressedBytes: number;
+  inSortingKey: boolean;
+  readBy: number;
+  readShare: number; // 0..1 of SELECTs
+  filterShare: number; // 0..1 of the listed query shapes, by count
 }
 
 /** What "Apply to production" would run right now, computed against the table as it is. */
@@ -361,6 +414,14 @@ export interface ApplyPlan {
   sql: string;
   statements: number; // statements Granulee would run; 0 for a rebuild
   sourceName: string;
+}
+
+export interface TrialOptimize {
+  status: 'running' | 'completed' | 'failed';
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+  sql: string;
 }
 
 export interface TrialApply {

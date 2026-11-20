@@ -9,6 +9,7 @@ import type {
   TableDetail,
   TableRecommendations,
   ApplyPlan,
+  TableUsage,
   Trial,
   TrialList,
   TrialPlan,
@@ -75,6 +76,8 @@ export const api = {
   restoreDismissed: (sourceId: string, database: string, table: string) =>
     request<void>('DELETE', `${tablePath(sourceId, database, table)}/recommendations/dismissed`),
 
+  tableUsage: (source: string, database: string, table: string) =>
+    request<TableUsage>('GET', `/sources/${e(source)}/databases/${e(database)}/tables/${e(table)}/usage`),
   trials: (source?: string | null) => request<TrialList>('GET', `/trials${qs({ source })}`),
   trialPlan: (source: string, database: string, table: string) =>
     request<TrialPlan>('GET', `/trials/plan${qs({ source, database, table })}`),
@@ -82,6 +85,7 @@ export const api = {
   startTrial: (req: TrialRequest) => request<Trial>('POST', '/trials', req),
   applyPlan: (id: string) => request<ApplyPlan>('GET', `/trials/${e(id)}/apply`),
   applyTrial: (id: string, sql: string) => request<Trial>('POST', `/trials/${e(id)}/apply`, { sql }),
+  optimizeTrial: (id: string) => request<Trial>('POST', `/trials/${e(id)}/optimize`),
   cancelTrial: (id: string) => request<Trial>('POST', `/trials/${e(id)}/cancel`),
   deleteTrial: (id: string) => request<void>('DELETE', `/trials/${e(id)}`),
 };

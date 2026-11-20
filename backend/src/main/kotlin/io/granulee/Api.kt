@@ -338,6 +338,16 @@ data class Trial(
     val log: List<LogLine>,
     /** The last time the candidate was applied to the production table, if ever. */
     val apply: TrialApply? = null,
+    /** The last OPTIMIZE … FINAL of the production table started from this trial, if any. */
+    val optimize: TrialOptimize? = null,
+)
+
+data class TrialOptimize(
+    val status: String, // running | completed | failed
+    val startedAt: String,
+    val finishedAt: String?,
+    val error: String?,
+    val sql: String,
 )
 
 /** What "Apply to production" would run right now, computed against the table as it is. */

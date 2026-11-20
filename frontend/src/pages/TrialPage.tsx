@@ -11,12 +11,13 @@ import { CodeBlock } from '../components/CodeBlock';
 import { PageHeader } from '../components/PageHeader';
 import { ErrorState, Loading } from '../components/States';
 import { Status, StatusDot, type Tone } from '../components/StatusDot';
-import { ApplyTrialDialog, RemoveTrialDialog, TrialProgressCard, trialTone, useRemoveTrial } from '../components/TrialParts';
+import { ApplyTrialDialog, OptimizeTrialDialog, RemoveTrialDialog, TrialProgressCard, trialTone, useRemoveTrial } from '../components/TrialParts';
 import {
   fmtBytes,
   fmtBytesPair,
   fmtChange,
   fmtClock,
+  fmtDuration,
   fmtInt,
   fmtMs,
   fmtMsPair,
@@ -61,7 +62,8 @@ export function TrialPage() {
   const { data: trial, error, reload } = useApi(() => api.trial(id), [id]);
   const [removing, setRemoving] = useRemoveTrial();
   const [applying, setApplying] = useState(false);
-  usePolling(trial?.status === 'running' || trial?.apply?.status === 'running', 2000, () => void reload(true));
+  const [optimizing, setOptimizing] = useState(false);
+  usePolling(trial?.status === 'running' || trial?.apply?.status === 'running' || trial?.optimize?.status === 'running', 2000, () => void reload(true));
 
   if (error && !trial) {
     return (
@@ -134,6 +136,33 @@ export function TrialPage() {
             </>
           ) : null}
           {trial.apply.status === 'running' ? <p className="caption muted">Type changes rewrite the column in every part; this page follows along.</p> : null}
+          {trial.apply.status === 'completed' ? (
+            <>
+              {trial.optimize ? (
+                <Status tone={trial.optimize.status === 'completed' ? 'success' : trial.optimize.status === 'failed' ? 'error' : 'active'} className="body-sm">
+                  {trial.optimize.status === 'running'
+                    ? `OPTIMIZE FINAL is running, started ${fmtClock(trial.optimize.startedAt)}`
+                    : trial.optimize.status === 'completed'
+                      ? `OPTIMIZE FINAL finished ${fmtClock(trial.optimize.finishedAt)}, after ${fmtDuration(
+                          new Date(trial.optimize.finishedAt ?? trial.optimize.startedAt).getTime() - new Date(trial.optimize.startedAt).getTime(),
+                        )}`
+                      : 'OPTIMIZE FINAL failed'}
+                </Status>
+              ) : (
+                <p className="caption muted">Parts written before the change keep their old codecs until they are merged. OPTIMIZE FINAL rewrites them now.</p>
+              )}
+              {trial.optimize?.status === 'failed' && trial.optimize.error ? (
+                <p className="body-sm muted" style={{ overflowWrap: 'anywhere' }}>{trial.optimize.error}</p>
+              ) : null}
+              {trial.optimize?.status === 'running' ? (
+                <p className="caption muted">Merging the whole table can take long; this page follows along and you can leave it.</p>
+              ) : (
+                <Button variant="secondary" onClick={() => setOptimizing(true)}>
+                  {trial.optimize ? 'Run OPTIMIZE FINAL again' : 'Run OPTIMIZE FINAL'}
+                </Button>
+              )}
+            </>
+          ) : null}
         </Card>
       ) : null}
 
@@ -164,6 +193,16 @@ export function TrialPage() {
         </Card>
       ) : null}
 
+      {optimizing ? (
+        <OptimizeTrialDialog
+          trial={trial}
+          onClose={() => setOptimizing(false)}
+          onStarted={() => {
+            setOptimizing(false);
+            void reload(true);
+          }}
+        />
+      ) : null}
       {applying ? (
         <ApplyTrialDialog
           trial={trial}

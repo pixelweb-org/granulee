@@ -158,3 +158,38 @@ export function ApplyTrialDialog({ trial, onClose, onStarted }: { trial: Trial; 
     </Dialog>
   );
 }
+
+/** Confirms OPTIMIZE … FINAL on the production table after the candidate has been applied. */
+export function OptimizeTrialDialog({ trial, onClose, onStarted }: { trial: Trial; onClose: () => void; onStarted: () => void }) {
+  const run = useAction();
+  const table = `${trial.database}.${trial.table}`;
+  return (
+    <Dialog
+      wide
+      title={`Run OPTIMIZE FINAL on ${table}?`}
+      onClose={onClose}
+      actions={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            busy={run.busy}
+            onClick={async () => {
+              if (await run.run(() => api.optimizeTrial(trial.id))) onStarted();
+            }}
+          >
+            Run OPTIMIZE FINAL
+          </Button>
+        </>
+      }
+    >
+      <p className="body muted">
+        This merges every partition of {table} on {trial.sourceName} into one part each, so data written before the change is rewritten with the new codecs. It reads and
+        writes the whole table: expect heavy disk and CPU load for a while, and free space for a second copy of the largest partition.
+      </p>
+      <CodeBlock code={`OPTIMIZE TABLE ${table} FINAL;`} />
+      <InlineError message={run.error} />
+    </Dialog>
+  );
+}

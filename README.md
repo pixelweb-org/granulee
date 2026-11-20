@@ -6,13 +6,16 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
   `system.parts_columns`, `system.data_skipping_indices`, `system.query_log`). Table data is not read.
 - **Recommendations** cover partitioning, sorting keys (from what `query_log` shows queries filter on),
   codecs, data types and skip indexes. Savings are estimates.
+- **Usage** shows how a table was queried, from `system.query_log`: SELECT and INSERT volume, which
+  columns are read and filtered on, the most frequent query shapes and who runs them.
 - **Trials** build a baseline and a candidate table in a scratch database, copy the same sample of
   rows into both, merge them, and compare sizes, column scans, insert throughput and replayed queries.
   The result also shows the statements that would apply the candidate to the production table:
   `ALTER TABLE` for column, codec and index changes, a rebuild script when a key changes.
   "Apply to production" on a finished trial shows those statements again, computed against the table as
   it is now, and runs the `ALTER`s after you confirm (the source's user needs `ALTER` on the table).
-  A rebuild is only shown, never run.
+  A rebuild is only shown, never run. Once applied, the trial page offers `OPTIMIZE … FINAL` for the table,
+  so existing parts are rewritten with the new codecs, and shows whether it is still running.
 
 ## Layout
 

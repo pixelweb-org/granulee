@@ -239,10 +239,18 @@ class TrialService(
     private val random = SecureRandom()
 
     init {
-        val interrupted = trials.filter { it.status == "running" || it.apply?.status == "running" }
+        val interrupted = trials.filter { it.status == "running" || it.apply?.status == "running" || it.optimize?.status == "running" }
         if (interrupted.isNotEmpty()) {
             val now = Instant.now().toString()
-            save(trials.map {
+            save(trials.map { t ->
+                if (t.optimize?.status == "running") t.copy(
+                    optimize = t.optimize.copy(
+                        status = "failed",
+                        finishedAt = now,
+                        error = "Granulee restarted while OPTIMIZE FINAL was running. ClickHouse may still be merging: check system.merges.",
+                    ),
+                ) else t
+            }.map {
                 if (it.apply?.status == "running") it.copy(
                     apply = it.apply.copy(
                         status = "failed",
@@ -454,10 +462,50 @@ class TrialService(
         return started
     }
 
+    /**
+     * OPTIMIZE … FINAL of the production table, so parts written before the ALTERs get the new codecs too.
+     * Only after the candidate has been applied.
+     */
+    fun optimize(id: String): Trial {
+        val trial = find(id)
+        if (trial.apply?.status != "completed") throw BadRequestException("Apply the trial to ${trial.database}.${trial.table} first")
+        if (trial.optimize?.status == "running") throw BadRequestException("OPTIMIZE FINAL is already running for trial #$id")
+        val source = sources.find(trial.sourceId)
+        val sql = "OPTIMIZE TABLE ${Sql.table(trial.database, trial.table)} FINAL"
+        val started = update(id) { it.copy(optimize = TrialOptimize("running", Instant.now().toString(), null, null, sql)) }
+        val queryId = "granulee-$id-optimize-${System.currentTimeMillis()}"
+        pool.execute {
+            fun finish(error: String?) = update(id) {
+                it.copy(optimize = it.optimize?.copy(status = if (error == null) "completed" else "failed", finishedAt = Instant.now().toString(), error = error))
+            }
+            val ch = sources.connection(source)
+            try {
+                ch.exec(sql, queryId = queryId)
+                finish(null)
+            } catch (e: Exception) {
+                // A merge of a large table can outlast the HTTP request. The statement keeps running on the server
+                // then, so follow it there instead of calling it failed.
+                fun stillRunning() = runCatching {
+                    ch.first("SELECT count() AS c FROM system.processes WHERE query_id = ${Sql.lit(queryId)}")?.long("c") ?: 0
+                }.getOrDefault(0) > 0
+                if (!stillRunning()) {
+                    log.warn("OPTIMIZE FINAL for trial {} failed: {}", id, e.message)
+                    finish(e.message ?: e.javaClass.simpleName)
+                } else {
+                    log.info("OPTIMIZE FINAL for trial {} outlasted the request; following it in system.processes", id)
+                    while (stillRunning()) Thread.sleep(10_000)
+                    finish(null)
+                }
+            }
+        }
+        return started
+    }
+
     fun delete(id: String) {
         val trial = find(id)
         if (trial.status == "running") throw BadRequestException("Trial #$id is still running. Cancel it first.")
         if (trial.apply?.status == "running") throw BadRequestException("Trial #$id is being applied to production. Wait for it to finish.")
+        if (trial.optimize?.status == "running") throw BadRequestException("OPTIMIZE FINAL started from trial #$id is still running. Wait for it to finish.")
         val source = sources.all().firstOrNull { it.id == trial.sourceId }
         if (source != null) dropTables(sources.connection(source), trial)
         synchronized(lock) { save(trials.filter { it.id != id }) }
@@ -896,6 +944,9 @@ class TrialController(private val trials: TrialService) {
 
     @PostMapping("/{id}/apply")
     fun apply(@PathVariable id: String, @RequestBody request: ApplyRequest): Trial = trials.apply(id, request.sql)
+
+    @PostMapping("/{id}/optimize")
+    fun optimize(@PathVariable id: String): Trial = trials.optimize(id)
 
     @PostMapping("/{id}/cancel")
     fun cancel(@PathVariable id: String): Trial = trials.cancel(id)
