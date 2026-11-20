@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/pixelweb-org/granulee/compare/v0.7.0...v0.8.0) (2026-11-20)
+
+
+### Features
+
+* plan queries with EXPLAIN, test new skip indexes in trials and measure existing ones ([c1a8268](https://github.com/pixelweb-org/granulee/commit/c1a82686b03e9be08c2e3c747afc45b37b8c0271))
+
 ## [0.7.0](https://github.com/pixelweb-org/granulee/compare/v0.6.0...v0.7.0) (2026-11-20)
 
 
