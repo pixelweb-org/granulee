@@ -113,6 +113,15 @@ export interface TableSummary {
   uncompressedBytes: number;
   activeParts: number;
   findings: number;
+  files: number | null; // estimated files on disk; null when the server does not report substreams
+}
+
+/** Files on disk, estimated: two per column substream in a wide part, a handful per part. */
+export interface FileFacts {
+  files: number;
+  largestPartFiles: number;
+  widestColumn: string;
+  widestColumnFiles: number; // per wide part
 }
 
 export interface DatabaseDetail {
@@ -160,6 +169,7 @@ export interface TableDetail {
   bytesOnDisk: number; // incl. marks, primary key, skip indexes
   activeParts: number;
   partitions: number;
+  files: FileFacts | null;
   primaryKeyBytesInMemory: number;
   primaryKeyBytesInMemoryAllocated: number;
   marks: number;

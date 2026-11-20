@@ -21,6 +21,34 @@ data class Snapshot(
     fun table(database: String, name: String): TableFacts? = tables.firstOrNull { it.database == database && it.name == name }
 }
 
+/** File estimates per (database, table). Empty when the server's system.parts_columns has no substreams. */
+internal fun fileFacts(ch: ChConnection, where: String): Map<Pair<String, String>, FileFacts> = try {
+    ch.query(
+        """
+        SELECT database, table, toInt64(2 * sum(streams) + $FILES_PER_PART * count()) AS files,
+               toInt64(2 * max(streams) + $FILES_PER_PART) AS largest_part_files,
+               argMax(widest, widest_streams) AS widest_column, toInt64(2 * max(widest_streams)) AS widest_column_files
+        FROM (
+            SELECT database, table, name, sumIf(length(substreams), part_type = 'Wide') AS streams,
+                   argMax(column, length(substreams)) AS widest, maxIf(length(substreams), part_type = 'Wide') AS widest_streams
+            FROM system.parts_columns
+            WHERE active AND $where
+            GROUP BY database, table, name
+        )
+        GROUP BY database, table
+        """.trimIndent(),
+    ).associate {
+        (it.str("database") to it.str("table")) to
+            FileFacts(it.long("files"), it.long("largest_part_files"), it.str("widest_column"), it.long("widest_column_files"))
+    }
+} catch (e: Exception) {
+    LoggerFactory.getLogger("io.granulee.Scan").info("No file counts: {}", e.message)
+    emptyMap()
+}
+
+// checksums, columns, count, primary index, partition and the like
+private const val FILES_PER_PART = 10
+
 data class HistoryPoint(val day: String = "", val sourceId: String = "", val compressedBytes: Long = 0)
 data class HistoryFile(val points: List<HistoryPoint> = emptyList())
 
@@ -201,6 +229,7 @@ class ScanService(
         }
 
         val queryLog = queryLog(ch, source.queryLogWindowDays)
+        val files = fileFacts(ch, "database NOT IN ($SYSTEM_DATABASES)")
 
         val facts = tables.map { row ->
             val key = row.str("database") to row.str("name")
@@ -224,6 +253,7 @@ class ScanService(
                 indexes = indexes[key].orEmpty(),
                 queries = queries?.first.orEmpty(),
                 queryTotal = if (queryLog == null) null else queries?.second ?: 0,
+                files = files[key],
             )
             val findings = Analyzer.analyze(table, source.queryLogWindowDays)
             table.copy(

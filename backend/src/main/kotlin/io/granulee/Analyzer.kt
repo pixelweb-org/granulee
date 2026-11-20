@@ -29,6 +29,17 @@ data class IndexFacts(
 
 data class QueryFacts(val query: String, val normalized: String, val count: Long)
 
+/**
+ * How many files a table is on disk, estimated from system.parts_columns: a wide part keeps two files per
+ * substream of a column, a compact part a handful whatever its columns are.
+ */
+data class FileFacts(
+    val files: Long = 0,
+    val largestPartFiles: Long = 0,
+    val widestColumn: String = "",
+    val widestColumnFiles: Long = 0, // per wide part
+)
+
 data class TableFacts(
     val database: String,
     val name: String,
@@ -50,6 +61,7 @@ data class TableFacts(
     val findings: Int = 0,
     val savingsBytes: Long = 0,
     val findingsByCategory: Map<String, Int> = emptyMap(),
+    val files: FileFacts? = null, // null = the server does not report substreams
 )
 
 data class Finding(val rec: Recommendation, val plan: TrialPlanRecommendation?)

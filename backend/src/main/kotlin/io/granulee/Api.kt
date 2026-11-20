@@ -102,6 +102,7 @@ data class TableSummary(
     val uncompressedBytes: Long,
     val activeParts: Long,
     val findings: Int,
+    val files: Long? = null,
 )
 
 data class DatabaseDetail(
@@ -163,6 +164,7 @@ data class TableDetail(
     val indexes: List<SkipIndex>,
     val createQuery: String,
     val findings: Int,
+    val files: FileFacts? = null,
 )
 
 data class QueryEvidence(val query: String, val count: Long, val share: Double)

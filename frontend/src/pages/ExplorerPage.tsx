@@ -204,6 +204,7 @@ function Explorer({ sourceId, database, onScanned }: { sourceId: string; databas
                       <th className="r">Uncompressed</th>
                       <th className="r">Ratio</th>
                       <th className="r">Active parts</th>
+                      <th className="r">Files</th>
                       <th className="r">Findings</th>
                     </tr>
                   </thead>
@@ -221,12 +222,13 @@ function Explorer({ sourceId, database, onScanned }: { sourceId: string; databas
                         <td className="r nowrap">{fmtBytes(t.uncompressedBytes)}</td>
                         <td className="r">{fmtRatio(t.uncompressedBytes, t.compressedBytes)}</td>
                         <td className="r">{fmtInt(t.activeParts)}</td>
+                        <td className="r">{t.files != null ? `≈ ${fmtInt(t.files)}` : '—'}</td>
                         <td className={`r${t.findings > 0 ? ' g-strong' : ''}`}>{fmtInt(t.findings)}</td>
                       </tr>
                     ))}
                     {!tables.length ? (
                       <tr>
-                        <td colSpan={8}>No tables match the filter.</td>
+                        <td colSpan={9}>No tables match the filter.</td>
                       </tr>
                     ) : null}
                   </tbody>

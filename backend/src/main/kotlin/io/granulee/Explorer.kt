@@ -130,7 +130,7 @@ class ExplorerController(
         val summary = summaries(snapshot).firstOrNull { it.name == db }
             ?: throw NotFoundException("Database $db was not in the last scan of ${source.name}")
         val tables = snapshot!!.tables.filter { it.database == db }.map {
-            TableSummary(it.database, it.name, it.engine, it.rows, it.compressedBytes, it.uncompressedBytes, it.activeParts, open(source, it).size)
+            TableSummary(it.database, it.name, it.engine, it.rows, it.compressedBytes, it.uncompressedBytes, it.activeParts, open(source, it).size, it.files?.files)
         }
         return DatabaseDetail(id, source.name, summary, tables, snapshot.scannedAt)
     }
@@ -224,6 +224,7 @@ class ExplorerController(
             indexes = indexes,
             createQuery = meta.str("create_table_query"),
             findings = findings.size,
+            files = fileFacts(ch, where)[db to table],
         )
     }
 

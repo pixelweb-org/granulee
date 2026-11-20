@@ -10,9 +10,14 @@ import { Chart } from '../components/Chart';
 import { CopyButton } from '../components/CodeBlock';
 import { PageHeader } from '../components/PageHeader';
 import { ErrorState, Loading } from '../components/States';
+import { StatusDot } from '../components/StatusDot';
 import { fmtBytes, fmtInt, fmtPct, fmtRatio, fmtRows } from '../lib/format';
 import { routes } from '../lib/routes';
 import { vars } from '../lib/style';
+
+// From here on the open-files limit of a default container setup gets close.
+const MANY_FILES = 20_000;
+const MANY_FILES_PER_COLUMN = 1_000;
 
 const dash = (v: string | null | undefined) => (v && v.trim() ? v : '—');
 
@@ -69,7 +74,23 @@ export function TablePage() {
         <StatTile label="Ratio" value={fmtRatio(t.uncompressedBytes, t.compressedBytes)} />
         <StatTile label="Size on disk" value={fmtBytes(t.bytesOnDisk)} sub="incl. marks, PK, skip indexes" />
         <StatTile label="Active parts · partitions" value={`${fmtInt(t.activeParts)} · ${fmtInt(t.partitions)}`} />
+        {t.files ? <StatTile label="Files on disk" value={`≈ ${fmtInt(t.files.files)}`} sub={`largest part ≈ ${fmtInt(t.files.largestPartFiles)}`} /> : null}
       </section>
+
+      {t.files && (t.files.files >= MANY_FILES || t.files.widestColumnFiles >= MANY_FILES_PER_COLUMN) ? (
+        <div className="notice" role="note">
+          <StatusDot tone="warning" />
+          <p className="body-sm">
+            {t.files.widestColumnFiles >= MANY_FILES_PER_COLUMN ? (
+              <>
+                Column <strong>{t.files.widestColumn}</strong> alone is about {fmtInt(t.files.widestColumnFiles)} files in every wide part.{' '}
+              </>
+            ) : null}
+            A merge opens the files of every part it reads, and a query opens them once per thread. Keep the server's open-files limit (nofile) well above{' '}
+            {fmtInt(t.files.files)}; ClickHouse recommends 262,144. With a lower limit, merges and inserts fail with “Too many open files”.
+          </p>
+        </div>
+      ) : null}
 
       <section className="grid-auto" style={vars({ min: 420, gap: 24 })}>
         <Card>
