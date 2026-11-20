@@ -165,6 +165,7 @@ data class TableDetail(
     val createQuery: String,
     val findings: Int,
     val files: FileFacts? = null,
+    val buffers: List<String> = emptyList(), // Buffer tables in front, as database.table
 )
 
 data class QueryEvidence(val query: String, val count: Long, val share: Double)

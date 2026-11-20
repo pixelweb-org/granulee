@@ -225,6 +225,7 @@ class ExplorerController(
             createQuery = meta.str("create_table_query"),
             findings = findings.size,
             files = fileFacts(ch, where)[db to table],
+            buffers = bufferTables(ch)["$db.$table"].orEmpty(),
         )
     }
 

@@ -105,6 +105,7 @@ export function TablePage() {
             <Term label="Primary key" mono>{dash(t.primaryKey)}</Term>
             <Term label="TTL" mono>{dash(t.ttl)}</Term>
             <Term label="Storage policy" mono>{dash(t.storagePolicy)}</Term>
+            {t.buffers.length ? <Term label="Buffer in front" mono>{t.buffers.join(', ')}</Term> : null}
           </dl>
         </Card>
         <Card>

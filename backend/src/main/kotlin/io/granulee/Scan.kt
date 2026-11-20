@@ -46,6 +46,25 @@ internal fun fileFacts(ch: ChConnection, where: String): Map<Pair<String, String
     emptyMap()
 }
 
+/** "database.table" a Buffer table flushes into, from its engine_full: Buffer('db', 'table', …). */
+internal fun bufferTarget(database: String, engineFull: String): String? {
+    val m = Regex("^Buffer\\(\\s*('(?:[^'\\\\]|\\\\.)*'|[^,]*?)\\s*,\\s*'?((?:[^'\\\\,)]|\\\\.)+)'?").find(engineFull.trim()) ?: return null
+    val db = m.groupValues[1].takeIf { it.startsWith("'") }?.trim('\'')?.ifEmpty { null } ?: database
+    return "$db.${m.groupValues[2].trim()}"
+}
+
+/**
+ * Buffer tables by the table they flush into. A query on the Buffer table reads and writes the table behind
+ * it, but query_log files it under the Buffer table's name.
+ */
+internal fun bufferTables(ch: ChConnection): Map<String, List<String>> = try {
+    ch.query("SELECT database, name, engine_full FROM system.tables WHERE engine = 'Buffer'")
+        .mapNotNull { row -> bufferTarget(row.str("database"), row.str("engine_full"))?.let { it to "${row.str("database")}.${row.str("name")}" } }
+        .groupBy({ it.first }, { it.second })
+} catch (e: Exception) {
+    emptyMap()
+}
+
 /** Granulee's own scans and trial copies are not how the table is used. */
 internal const val NOT_GRANULEE = "NOT startsWith(http_user_agent, 'granulee ')"
 
@@ -231,7 +250,8 @@ class ScanService(
             IndexFacts(it.str("name"), it.str("expr"), it.str("type_full"), it.long("granularity"), it.long("compressed"), it.long("uncompressed"))
         }
 
-        val queryLog = queryLog(ch, source.queryLogWindowDays)
+        val buffers = bufferTables(ch)
+        val queryLog = queryLog(ch, source.queryLogWindowDays, buffers)
         val files = fileFacts(ch, "database NOT IN ($SYSTEM_DATABASES)")
 
         val facts = tables.map { row ->
@@ -257,6 +277,7 @@ class ScanService(
                 queries = queries?.first.orEmpty(),
                 queryTotal = if (queryLog == null) null else queries?.second ?: 0,
                 files = files[key],
+                buffers = buffers["${key.first}.${key.second}"].orEmpty(),
             )
             val findings = Analyzer.analyze(table, source.queryLogWindowDays)
             table.copy(
@@ -308,7 +329,9 @@ class ScanService(
     }
 
     /** The 20 most frequent SELECT shapes per table, and the total SELECT count. Null when query_log cannot be read. */
-    private fun queryLog(ch: ChConnection, days: Int): Map<String, Pair<List<QueryFacts>, Long>>? = try {
+    private fun queryLog(ch: ChConnection, days: Int, buffers: Map<String, List<String>>): Map<String, Pair<List<QueryFacts>, Long>>? = try {
+        // Queries sent to a Buffer table count for the table behind it.
+        val behind = buffers.flatMap { (target, fronts) -> fronts.map { it to target } }.toMap()
         ch.query(
             """
             SELECT t, substring(q, 1, 20000) AS q, substring(normalizeQuery(q), 1, 4000) AS nq, toInt64(c) AS c,
@@ -325,6 +348,8 @@ class ScanService(
             """.trimIndent(),
         ).groupBy { it.str("t") }.mapValues { (_, rows) ->
             rows.map { QueryFacts(it.str("q"), it.str("nq"), it.long("c")) } to rows.first().long("total")
+        }.entries.groupBy({ behind[it.key] ?: it.key }, { it.value }).mapValues { (_, parts) ->
+            parts.flatMap { it.first }.sortedByDescending { it.count }.take(20) to parts.sumOf { it.second }
         }
     } catch (e: Exception) {
         log.info("query_log is not readable: {}", e.message)

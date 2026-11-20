@@ -62,6 +62,7 @@ data class TableFacts(
     val savingsBytes: Long = 0,
     val findingsByCategory: Map<String, Int> = emptyMap(),
     val files: FileFacts? = null, // null = the server does not report substreams
+    val buffers: List<String> = emptyList(), // Buffer tables in front of this one, as database.table
 )
 
 data class Finding(val rec: Recommendation, val plan: TrialPlanRecommendation?)

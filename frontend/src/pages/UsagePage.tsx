@@ -88,6 +88,7 @@ export function UsagePage() {
           <>
             How {u.database}.{u.table} was queried in the last {u.windowDays} days, from system.query_log{since ? ` (the log starts ${since})` : ''}. Granulee's own queries are
             left out.
+            {u.via.length ? ` Queries sent to the Buffer table ${u.via.join(', ')} in front of it are counted in.` : ''}
           </>
         }
         actions={

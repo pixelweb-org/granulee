@@ -117,4 +117,20 @@ class MigrationSqlTest {
 
         assertEquals("none", migration("analytics", "events", live, request()).kind)
     }
+
+    @Test
+    fun `a Buffer table names the table behind it`() {
+        assertEquals("flight_tracker.movement_data_optimized", bufferTarget("flight_tracker", "Buffer('flight_tracker', 'movement_data_optimized', 1, 10, 100, 10000, 1000000, 10000000, 100000000)"))
+        assertEquals("logs.events", bufferTarget("logs", "Buffer(currentDatabase(), 'events', 16, 10, 100, 10000, 1000000, 10000000, 100000000)"))
+        assertEquals("logs.events", bufferTarget("logs", "Buffer('', events, 16, 10, 100, 10000, 1000000, 10000000, 100000000)"))
+        assertEquals(null, bufferTarget("logs", "MergeTree ORDER BY id"))
+    }
+
+    @Test
+    fun `a replayed query on the Buffer table is pointed at the trial table`() {
+        val logged = "SELECT count() FROM flight_tracker.movement_data_buffer WHERE hex = 'abc'"
+        val first = rewriteQuery(logged, "flight_tracker", "movement_data_optimized", "`scratch`.`t`")
+        assertEquals(logged, first)
+        assertEquals("SELECT count() FROM `scratch`.`t` WHERE hex = 'abc'", rewriteQuery(first, "flight_tracker", "movement_data_buffer", "`scratch`.`t`"))
+    }
 }

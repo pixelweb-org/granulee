@@ -674,7 +674,10 @@ class TrialService(
                 queries.forEachIndexed { i, q ->
                     var error: String? = null
                     fun replay(target: String): Pair<Double?, Long?> = try {
-                        val sql = rewriteQuery(q.query, trial.database, trial.table, target)
+                        // A logged query may name a Buffer table in front of the production table instead.
+                        val sql = facts?.buffers.orEmpty().fold(rewriteQuery(q.query, trial.database, trial.table, target)) { text, buffer ->
+                            rewriteQuery(text, buffer.substringBefore('.'), buffer.substringAfter('.'), target)
+                        }
                         val runs = (1..request.runsPerQuery).map { exec(sql, settings) }
                         median(runs.map { it.elapsedMs }.let { if (it.size >= 3) it.drop(1) else it }) to runs.last().readRows
                     } catch (e: ChException) {

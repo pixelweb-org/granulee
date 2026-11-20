@@ -170,6 +170,7 @@ export interface TableDetail {
   activeParts: number;
   partitions: number;
   files: FileFacts | null;
+  buffers: string[]; // Buffer tables in front, as database.table
   primaryKeyBytesInMemory: number;
   primaryKeyBytesInMemoryAllocated: number;
   marks: number;
@@ -383,6 +384,7 @@ export interface TableUsage {
   unreadColumns: string[];
   unreadBytes: number;
   users: { user: string; selects: number; inserts: number }[];
+  via: string[]; // Buffer tables in front whose queries are counted in
 }
 
 export interface UsageQuery {

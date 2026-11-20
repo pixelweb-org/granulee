@@ -61,6 +61,7 @@ data class TableUsage(
     val unreadColumns: List<String>,
     val unreadBytes: Long,
     val users: List<UsageUser>,
+    val via: List<String> = emptyList(), // Buffer tables in front whose queries are counted in
 )
 
 @RestController
@@ -73,9 +74,14 @@ class UsageController(private val sources: SourceService, private val scans: Sca
         val source = sources.find(id)
         val ch = sources.connection(source)
         val days = source.queryLogWindowDays
-        val full = Sql.lit("$db.$table")
-        val scope = "event_date >= today() - $days AND type = 'QueryFinish' AND is_initial_query AND has(tables, $full) AND $NOT_GRANULEE"
-        val isInsert = "query_kind IN ('Insert', 'AsyncInsertFlush')"
+        // Queries sent to a Buffer table in front reach this table, but the log files them under the Buffer's name.
+        val via = bufferTables(ch)["$db.$table"].orEmpty()
+        val names = listOf("$db.$table") + via
+        val scope = "event_date >= today() - $days AND type = 'QueryFinish' AND is_initial_query AND " +
+            "hasAny(tables, [${names.joinToString(", ") { Sql.lit(it) }}]) AND $NOT_GRANULEE"
+        // An asynchronous insert is logged twice: the client's INSERT, and the flush that carries the rows.
+        val isInsert = "query_kind = 'Insert'"
+        val writes = "query_kind IN ('Insert', 'AsyncInsertFlush')"
 
         val tableRows = ch.first(
             "SELECT toInt64(sum(rows)) AS rows FROM system.parts WHERE active AND database = ${Sql.lit(db)} AND table = ${Sql.lit(table)}",
@@ -84,15 +90,15 @@ class UsageController(private val sources: SourceService, private val scans: Sca
 
         fun empty(available: Boolean, message: String?, since: String? = null) = TableUsage(
             id, source.name, db, table, days, available, message, since, 0, 0, 0, 0, 0, 0, 0, 0.0, 0.0, tableRows, 0,
-            emptyList(), emptyList(), emptyList(), emptyList(), 0, emptyList(),
+            emptyList(), emptyList(), emptyList(), emptyList(), 0, emptyList(), via,
         )
 
         val totals = try {
             ch.first(
                 """
-                SELECT toInt64(countIf(query_kind = 'Select')) AS selects, toInt64(countIf($isInsert)) AS inserts, toInt64(count()) AS total,
+                SELECT toInt64(countIf(query_kind = 'Select')) AS selects, toInt64(countIf($isInsert)) AS inserts, toInt64(countIf(query_kind != 'AsyncInsertFlush')) AS total,
                        toInt64(sumIf(read_rows, query_kind = 'Select')) AS sel_rows, toInt64(sumIf(read_bytes, query_kind = 'Select')) AS sel_bytes,
-                       toInt64(sumIf(written_rows, $isInsert)) AS ins_rows, toInt64(sumIf(written_bytes, $isInsert)) AS ins_bytes,
+                       toInt64(sumIf(written_rows, $writes)) AS ins_rows, toInt64(sumIf(written_bytes, $writes)) AS ins_bytes,
                        toFloat64(quantileExactIf(0.5)(query_duration_ms, query_kind = 'Select')) AS median_ms,
                        toFloat64(quantileExactIf(0.95)(query_duration_ms, query_kind = 'Select')) AS p95_ms,
                        toInt64(countIf(query_kind = 'Select' AND read_rows >= ${(tableRows / 2).coerceAtLeast(1)})) AS wide_scans,
@@ -137,17 +143,18 @@ class UsageController(private val sources: SourceService, private val scans: Sca
             )
         }
 
-        val prefix = "$db.$table."
+        // query_log names a column as database.table.column, with the Buffer table's name where the query used it.
+        val strip = names.joinToString(", ") { "startsWith(x, ${Sql.lit("$it.")}), substring(x, ${"$it.".length + 1})" }
         val readBy = ch.query(
             """
             SELECT col, toInt64(count()) AS c
             FROM (
-                SELECT arrayJoin(arrayDistinct(arrayFilter(x -> startsWith(x, ${Sql.lit(prefix)}), columns))) AS col
+                SELECT arrayJoin(arrayDistinct(arrayFilter(c -> c != '', arrayMap(x -> multiIf($strip, ''), columns)))) AS col
                 FROM system.query_log WHERE $scope AND query_kind = 'Select'
             )
             GROUP BY col
             """.trimIndent(),
-        ).associate { it.str("col").removePrefix(prefix) to it.long("c") }
+        ).associate { it.str("col") to it.long("c") }
 
         val listed = shapes.sumOf { it.count }.coerceAtLeast(1)
         val filters = shapes.map { filterText(it.query) to it.count }
@@ -178,7 +185,7 @@ class UsageController(private val sources: SourceService, private val scans: Sca
             selectMedianMs = totals.double("median_ms"), selectP95Ms = totals.double("p95_ms"),
             tableRows = tableRows, wideScans = totals.long("wide_scans"),
             days = perDay, queries = shapes, columns = columns,
-            unreadColumns = unread.map { it.name }, unreadBytes = unread.sumOf { it.compressedBytes }, users = users,
+            unreadColumns = unread.map { it.name }, unreadBytes = unread.sumOf { it.compressedBytes }, users = users, via = via,
         )
     }
 }
