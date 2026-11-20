@@ -186,14 +186,28 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
   const scratchNeeded = plan.totalRows > 0 ? effectiveRows * (plan.compressedBytes / plan.totalRows) * 2 : 0;
   const noSpace = plan.scratchFreeBytes != null && scratchNeeded > plan.scratchFreeBytes;
   const runsN = Math.max(1, parseInt(runs, 10) || 1);
-  const nothingChanged = changedKeys === 0 && changedCols.length === 0 && schema.dropIndexes.length === 0 && schema.addIndexes.length === 0;
+  // The index in the form counts as soon as it is complete; "Add index" only makes room for another one.
+  const draftName = draft.name.trim() || (draft.expression.trim() ? `idx_${draft.expression.trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}` : '');
+  const draftProblem = !draft.expression.trim()
+    ? null
+    : !/^[A-Za-z_][A-Za-z0-9_]*$/.test(draftName)
+      ? 'The index name may only contain letters, digits and underscores.'
+      : !draft.type.trim()
+        ? 'Pick an index type, such as minmax or set(100).'
+        : plan.indexes.includes(draftName) || schema.addIndexes.some((i) => i.name === draftName)
+          ? `An index named ${draftName} already exists. Give this one another name.`
+          : null;
+  const pending: TrialIndex | null =
+    draft.expression.trim() && !draftProblem ? { name: draftName, expression: draft.expression.trim(), type: draft.type.trim(), granularity: draft.granularity } : null;
+  const addIndexes = pending ? [...schema.addIndexes, pending] : schema.addIndexes;
+  const nothingChanged = changedKeys === 0 && changedCols.length === 0 && schema.dropIndexes.length === 0 && addIndexes.length === 0;
   const canStart = plan.trialsEnabled && n > 0 && !nothingChanged && name.trim() !== '' && (sampling !== 'where' || where.trim() !== '');
 
   const changes = [
     changedKeys ? `${changedKeys} ${changedKeys === 1 ? 'key' : 'keys'}` : null,
     changedCols.length ? `${changedCols.length} ${changedCols.length === 1 ? 'column' : 'columns'}` : null,
     schema.dropIndexes.length ? `${schema.dropIndexes.length} ${schema.dropIndexes.length === 1 ? 'index' : 'indexes'} dropped` : null,
-    schema.addIndexes.length ? `${schema.addIndexes.length} ${schema.addIndexes.length === 1 ? 'index' : 'indexes'} added` : null,
+    addIndexes.length ? `${addIndexes.length} ${addIndexes.length === 1 ? 'index' : 'indexes'} added` : null,
   ].filter(Boolean);
 
   async function submit() {
@@ -206,7 +220,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
       sortingKey: schema.sortingKey.trim(),
       columns: plan.columns.map((c) => ({ name: c.name, type: schema.cols[c.name].type, codec: schema.cols[c.name].codec })),
       dropIndexes: schema.dropIndexes,
-      addIndexes: schema.addIndexes,
+      addIndexes,
       rows: effectiveRows,
       sampling,
       where: sampling === 'where' ? where.trim() : null,
@@ -426,7 +440,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
               </div>
             ) : null}
             <div className="row" style={{ alignItems: 'flex-end', ...vars({ gap: 12 }) }}>
-              <DraftField label="Index name" width={170} value={draft.name} placeholder="idx_country" onChange={(v) => setDraft({ ...draft, name: v })} />
+              <DraftField label="Index name" width={170} value={draft.name} placeholder={draftName || 'idx_country'} onChange={(v) => setDraft({ ...draft, name: v })} />
               <DraftField label="Expression" width={220} value={draft.expression} placeholder="country" onChange={(v) => setDraft({ ...draft, expression: v })} />
               <DraftField label="Type" width={200} value={draft.type} list="index-types" onChange={(v) => setDraft({ ...draft, type: v })} />
               <DraftField
@@ -438,22 +452,24 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
               />
               <Button
                 variant="dark"
-                disabled={
-                  !/^[A-Za-z_][A-Za-z0-9_]*$/.test(draft.name.trim()) ||
-                  !draft.expression.trim() ||
-                  !draft.type.trim() ||
-                  schema.addIndexes.some((i) => i.name === draft.name.trim()) ||
-                  plan.indexes.includes(draft.name.trim())
-                }
+                disabled={!pending}
                 onClick={() => {
-                  const index = { ...draft, name: draft.name.trim(), expression: draft.expression.trim(), type: draft.type.trim() };
-                  setSchema((s) => ({ ...s, addIndexes: [...s.addIndexes, index] }));
+                  if (!pending) return;
+                  setSchema((s) => ({ ...s, addIndexes: [...s.addIndexes, pending] }));
                   setDraft(EMPTY_INDEX);
                 }}
               >
-                Add index
+                Add another
               </Button>
             </div>
+            {draftProblem ? <p className="g-notice">{draftProblem}</p> : null}
+            {pending ? (
+              <p className="caption muted">
+                {pending.name} ({pending.type} on {pending.expression}) is part of the candidate. “Add another” keeps it and clears the fields for one more.
+              </p>
+            ) : !draft.expression.trim() ? (
+              <p className="caption muted">Enter an expression, usually a column name, to add an index to the candidate. The name is filled in for you.</p>
+            ) : null}
             <datalist id="index-types">
               {INDEX_TYPES.map((t) => (
                 <option key={t} value={t} />
@@ -548,7 +564,9 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
             {plan.scratchDatabase || 'scratch'}.{plan.table}_trial_&lt;id&gt;_cand
           </span>
         </div>
-        {nothingChanged ? <p className="caption muted">Change at least one key, column or index to have something to compare.</p> : null}
+        {nothingChanged ? (
+          <p className="caption muted">The candidate equals the baseline. Change a key or a column, or add or drop a skip index, to have something to compare.</p>
+        ) : null}
         <Button stretch disabled={!canStart} busy={start.busy} onClick={submit}>
           {start.busy ? 'Starting…' : 'Start trial'}
         </Button>

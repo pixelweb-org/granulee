@@ -36,7 +36,15 @@ const STEP_KIND: Record<IndexStep['kind'], string> = { minmax: 'Min-max', partit
 /** Did the skip indexes this trial added prune anything? Summed over the replayed queries' plans on the candidate. */
 function NewIndexes({ trial, result }: { trial: Trial; result: TrialResult }) {
   const added = trial.request.addIndexes ?? [];
-  if (!added.length || !result.queries.some((q) => q.candExplain)) return null;
+  if (!added.length) return null;
+  if (!result.queries.some((q) => q.candExplain)) {
+    return (
+      <p className="g-notice">
+        This trial added {added.map((i) => i.name).join(', ')}, but no query was replayed, so nothing shows whether {added.length === 1 ? 'it prunes' : 'they prune'}.
+        Replaying needs SELECTs on this table in query_log and the replay option switched on in the trial setup.
+      </p>
+    );
+  }
   const rows = added.map((index) => {
     const used = result.queries.flatMap((q) => (q.candExplain?.steps ?? []).filter((s) => s.kind === 'skip' && s.name === index.name).map((s) => ({ q, s })));
     const before = used.reduce((a, u) => a + u.s.granulesBefore, 0);
@@ -485,6 +493,8 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
         <p className="caption muted">Highlighted rows were changed in this trial. Unchanged columns can still move when the sorting key reorders rows.</p>
       </section>
 
+      {!r.queries.length ? <NewIndexes trial={trial} result={r} /> : null}
+
       {r.queries.length || scanCols.length ? (
         <section className="stack">
           <h2 className="card-title">Query performance</h2>
@@ -520,7 +530,7 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
               />
             ) : null}
           </div>
-          <NewIndexes trial={trial} result={r} />
+          {r.queries.length ? <NewIndexes trial={trial} result={r} /> : null}
           {r.queries.length ? (
             <ol className="stack" style={{ listStyle: 'none', margin: 0, padding: 0, ...vars({ gap: 12 }) }}>
               {r.queries.map((q) => {
