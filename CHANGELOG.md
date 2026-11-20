@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/pixelweb-org/granulee/compare/v0.8.1...v0.9.0) (2026-11-20)
+
+
+### Features
+
+* say why a source has no query log and how to switch it on ([2cc3ba7](https://github.com/pixelweb-org/granulee/commit/2cc3ba7b2a3600cad37e2fc47af34a94c6cd2cfd))
+
 ## [0.8.1](https://github.com/pixelweb-org/granulee/compare/v0.8.0...v0.8.1) (2026-11-20)
 
 
