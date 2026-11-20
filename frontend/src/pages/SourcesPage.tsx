@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, useEffect } from 'react';
 import { api } from '../api/client';
+import { QueryLogGuide } from '../components/QueryLogGuide';
 import type { ConnectionTest, Protocol, Schedule, Source, SourceInput } from '../api/types';
 import { useAction } from '../hooks/useApi';
 import { useSources } from '../state/sources';
@@ -83,6 +84,10 @@ function toInput(f: FormState): SourceInput {
 
 export function SourcesPage() {
   const { sources, loading, error, reload, select, selectedId } = useSources();
+  // Other pages link here with #query-log when a source lacks the query log.
+  useEffect(() => {
+    if (window.location.hash === '#query-log' && sources.length) document.getElementById('query-log')?.scrollIntoView();
+  }, [sources.length]);
   const [form, setForm] = useState<FormState>(EMPTY);
   const [editing, setEditing] = useState<Source | null>(null);
   const [test, setTest] = useState<ConnectionTest | null>(null);
@@ -233,6 +238,11 @@ export function SourcesPage() {
             </table>
           </Card>
           <InlineError message={scan.error} />
+          <div id="query-log" className="stack" style={{ scrollMarginTop: 24 }}>
+            {sources.map((s) => (
+              <QueryLogGuide key={s.id} source={s} />
+            ))}
+          </div>
         </>
       ) : (
         <p className="body muted">No data sources yet — add one below.</p>

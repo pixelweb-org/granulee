@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { QueryLogGuide, lacksQueryLog } from '../components/QueryLogGuide';
 import type { TableUsage, UsageQuery } from '../api/types';
 import { useApi } from '../hooks/useApi';
 import { useSources } from '../state/sources';
@@ -62,7 +63,8 @@ function shapeLabel(query: string, rank: number): string {
 
 export function UsagePage() {
   const { sourceId = '', database = '', table = '' } = useParams();
-  const { select } = useSources();
+  const { select, sources } = useSources();
+  const source = sources.find((s) => s.id === sourceId);
   useEffect(() => select(sourceId), [select, sourceId]);
   const { data: t, error: tableError, reload: reloadTable } = useApi(() => api.table(sourceId, database, table), [sourceId, database, table]);
   const { data: u, error, reload } = useApi(() => api.tableUsage(sourceId, database, table), [sourceId, database, table]);
@@ -109,11 +111,17 @@ export function UsagePage() {
     <>
       <TableHeader t={t} active="usage" />
 
-      {!u.available ? (
+      {!u.available && lacksQueryLog(source) ? (
+        <QueryLogGuide source={source} />
+      ) : !u.available ? (
         <EmptyState title="The query log is not available">
           <p className="g-wrap">{u.message}</p>
-          <p>Usage is read from system.query_log. Switch it on in the server configuration and give the source's user SELECT on it.</p>
+          <p>
+            Usage is read from system.query_log. <Link className="g-link" to="/sources#query-log">Data sources</Link> shows how to switch it on after the next scan.
+          </p>
         </EmptyState>
+      ) : total === 0 && lacksQueryLog(source) ? (
+        <QueryLogGuide source={source} />
       ) : total === 0 ? (
         <EmptyState title="No queries in this window">
           <p>{u.message ?? `system.query_log has no query on ${u.database}.${u.table} in the last ${u.windowDays} days${since ? `; the log starts ${since}` : ''}.`}</p>

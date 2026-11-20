@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
+import { QueryLogNote } from '../components/QueryLogGuide';
 import { useAction, useApi } from '../hooks/useApi';
 import { useSources } from '../state/sources';
 import { Button } from '../components/Button';
@@ -85,6 +86,10 @@ export function OverviewPage() {
       {!scanned ? (
         <EmptyState title="Not scanned yet">Run a scan to read table sizes, compression and schema findings from the system tables.</EmptyState>
       ) : (
+        <>
+          {(selected ? [selected] : sources).map((s) => (
+            <QueryLogNote key={s.id} source={s} />
+          ))}
         <section aria-label="Totals" className="grid-auto" style={vars({ min: 200 })}>
           <StatTile label="Compressed on disk" value={fmtBytes(t.compressedBytes)} />
           <StatTile label="Uncompressed" value={fmtBytes(t.uncompressedBytes)} />
@@ -93,6 +98,7 @@ export function OverviewPage() {
           <StatTile label="Open findings" value={fmtInt(t.findings)} />
           <StatTile emphasis label="Potential savings" value={t.savingsBytes > 0 ? `≈ ${fmtBytes(t.savingsBytes)}` : '—'} />
         </section>
+        </>
       )}
 
       <section className="stack">

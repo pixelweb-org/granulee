@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
+import { QueryLogNote } from '../components/QueryLogGuide';
 import type { Opportunity } from '../api/types';
 import { useAction, useApi } from '../hooks/useApi';
 import { useSources } from '../state/sources';
@@ -63,6 +64,9 @@ export function RecommendationsListPage() {
         }
       />
       <InlineError message={exporting.error} />
+      {(selected ? [selected] : sources).map((s) => (
+        <QueryLogNote key={s.id} source={s} />
+      ))}
 
       {!loading && !sources.length ? (
         <EmptyState title="No data sources yet" action={<Button to="/sources">Add a data source</Button>}>

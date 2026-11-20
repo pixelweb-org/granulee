@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { QueryLogNote } from '../components/QueryLogGuide';
+import { useSources } from '../state/sources';
 import type { ChangeKind, Recommendation, RecommendationCategory, Severity } from '../api/types';
 import { useAction, useApi } from '../hooks/useApi';
 import { Button, Choice } from '../components/Button';
@@ -41,6 +43,7 @@ const GROUPS: { key: Group; label: string }[] = [
 export function RecommendationsPage() {
   const { sourceId = '', database = '', table = '' } = useParams();
   const { data, error, reload } = useApi(() => api.recommendations(sourceId, database, table), [sourceId, database, table]);
+  const { sources } = useSources();
   const [group, setGroup] = useState<Group | 'all'>('all');
   const action = useAction();
 
@@ -108,6 +111,8 @@ export function RecommendationsPage() {
           </>
         }
       />
+
+      <QueryLogNote source={sources.find((s) => s.id === sourceId)} />
 
       <section aria-label="Summary" className="grid-auto" style={vars({ min: 200 })}>
         <StatTile emphasis label="Estimated savings" value={data.savingsBytes > 0 ? `≈ ${fmtBytes(data.savingsBytes)}` : '—'} />

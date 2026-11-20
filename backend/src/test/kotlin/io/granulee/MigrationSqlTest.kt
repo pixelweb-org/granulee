@@ -167,4 +167,12 @@ class MigrationSqlTest {
         assertEquals(null, Analyzer.skipIndexType(column("url", "String"), setOf("range")))
         assertEquals("minmax", Analyzer.skipIndexType(column("event_date", "Date"), setOf("eq")))
     }
+
+    @Test
+    fun `the reason query_log cannot be read is told apart`() {
+        assertEquals("missing", queryLogProblem("Unknown table expression identifier 'system.query_log'. In scope SELECT t").state)
+        assertEquals("missing", queryLogProblem("Table system.query_log does not exist").state)
+        assertEquals("denied", queryLogProblem("granulee_ro: Not enough privileges. To execute this query, it's necessary to have the grant SELECT(tables) ON system.query_log").state)
+        assertEquals("error", queryLogProblem("Timeout exceeded").state)
+    }
 }

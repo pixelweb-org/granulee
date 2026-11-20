@@ -34,6 +34,8 @@ export interface Source {
   nextScanAt: string | null;
   tables: number | null; // from the last scan
   compressedBytes: number | null; // from the last scan
+  /** Whether the last scan could use system.query_log; null before the first scan. */
+  queryLog: { state: 'ok' | 'missing' | 'denied' | 'empty' | 'error'; message: string | null } | null;
 }
 
 export interface SourceInput {

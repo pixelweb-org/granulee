@@ -6,6 +6,9 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
   `system.parts_columns`, `system.data_skipping_indices`, `system.query_log`). Table data is not read.
 - **Recommendations** cover partitioning, sorting keys (from what `query_log` shows queries filter on),
   codecs, data types and skip indexes. Savings are estimates.
+- **Without a query log** the scan still covers sizes, codecs, types, partitioning and file counts.
+  Granulee says per source why the log is unavailable (switched off, no read access, empty) and shows
+  the steps to switch it on.
 - **Usage** shows how a table was queried, from `system.query_log`: SELECT and INSERT volume, which
   columns are read and filtered on, the most frequent query shapes and who runs them.
 - **Skip indexes** are measured, not guessed: the table page plans the logged queries with

@@ -1,6 +1,8 @@
 import { useId, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { QueryLogNote } from '../components/QueryLogGuide';
+import { useSources } from '../state/sources';
 import type { Sampling, TrialIndex, TrialPlan, TrialPlanColumn, TrialPlanRecommendation, TrialRequest } from '../api/types';
 import { useAction, useApi } from '../hooks/useApi';
 import { Button } from '../components/Button';
@@ -161,6 +163,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
   const [adding, setAdding] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [draft, setDraft] = useState<TrialIndex>(EMPTY_INDEX);
+  const { sources } = useSources();
 
   function toggleRec(rec: TrialPlanRecommendation, on: boolean) {
     const nextTicked = on ? [...ticked, rec.id] : ticked.filter((id) => id !== rec.id);
@@ -521,6 +524,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
 
         <Card as="section" style={{ gap: 8 }}>
           <StepHead step="Step 4" title="Performance test" />
+          <QueryLogNote source={sources.find((s) => s.id === plan.sourceId)} />
           <Checkbox checked={replayQueries} onChange={setReplayQueries} disabled={plan.replayableQueries === 0}>
             {plan.replayableQueries > 0
               ? `Replay the ${plan.replayableQueries} most frequent ${plan.replayableQueries === 1 ? 'query' : 'queries'} from query_log`

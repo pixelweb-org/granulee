@@ -16,6 +16,7 @@ data class Snapshot(
     val scannedAt: String = "",
     val durationMs: Long = 0,
     val queryLogReadable: Boolean = false,
+    val queryLog: QueryLogStatus? = null,
     val tables: List<TableFacts> = emptyList(),
 ) {
     fun table(database: String, name: String): TableFacts? = tables.firstOrNull { it.database == database && it.name == name }
@@ -63,6 +64,17 @@ internal fun bufferTables(ch: ChConnection): Map<String, List<String>> = try {
         .groupBy({ it.first }, { it.second })
 } catch (e: Exception) {
     emptyMap()
+}
+
+/** Why reading system.query_log failed, from the server's message. */
+internal fun queryLogProblem(message: String?): QueryLogStatus {
+    val text = message.orEmpty()
+    val state = when {
+        Regex("unknown table|doesn'?t exist|does not exist|UNKNOWN_TABLE", RegexOption.IGNORE_CASE).containsMatchIn(text) -> "missing"
+        Regex("not enough privileges|ACCESS_DENIED", RegexOption.IGNORE_CASE).containsMatchIn(text) -> "denied"
+        else -> "error"
+    }
+    return QueryLogStatus(state, text.take(300).ifBlank { null })
 }
 
 /** Granulee's own scans and trial copies are not how the table is used. */
@@ -131,6 +143,8 @@ class ScanService(
             nextScanAt = sources.nextScanAt(source)?.toString(),
             tables = snapshot?.tables?.size,
             compressedBytes = snapshot?.tables?.sumOf { it.compressedBytes },
+            // Snapshots written before the status existed only know whether the log could be read.
+            queryLog = snapshot?.let { it.queryLog ?: QueryLogStatus(if (it.queryLogReadable) "ok" else "error") },
         )
     }
 
@@ -251,7 +265,20 @@ class ScanService(
         }
 
         val buffers = bufferTables(ch)
-        val queryLog = queryLog(ch, source.queryLogWindowDays, buffers)
+        var queryLogStatus = QueryLogStatus("ok")
+        val queryLog = try {
+            queryLog(ch, source.queryLogWindowDays, buffers).also { found ->
+                // Readable but nothing in it for any table: tell an idle server from a log that records nothing.
+                if (found.isEmpty()) {
+                    val entries = ch.first("SELECT count() AS c FROM system.query_log WHERE event_date >= today() - ${source.queryLogWindowDays}")?.long("c") ?: 0
+                    if (entries == 0L) queryLogStatus = QueryLogStatus("empty")
+                }
+            }
+        } catch (e: Exception) {
+            log.info("query_log is not readable on {}: {}", source.name, e.message)
+            queryLogStatus = queryLogProblem(e.message)
+            null
+        }
         val files = fileFacts(ch, "database NOT IN ($SYSTEM_DATABASES)")
 
         val facts = tables.map { row ->
@@ -292,6 +319,7 @@ class ScanService(
             scannedAt = started.toString(),
             durationMs = java.time.Duration.between(started, Instant.now()).toMillis(),
             queryLogReadable = queryLog != null,
+            queryLog = queryLogStatus,
             tables = facts,
         )
     }
@@ -328,11 +356,11 @@ class ScanService(
         emptyMap()
     }
 
-    /** The 20 most frequent SELECT shapes per table, and the total SELECT count. Null when query_log cannot be read. */
-    private fun queryLog(ch: ChConnection, days: Int, buffers: Map<String, List<String>>): Map<String, Pair<List<QueryFacts>, Long>>? = try {
+    /** The 20 most frequent SELECT shapes per table, and the total SELECT count. Throws when query_log cannot be read. */
+    private fun queryLog(ch: ChConnection, days: Int, buffers: Map<String, List<String>>): Map<String, Pair<List<QueryFacts>, Long>> {
         // Queries sent to a Buffer table count for the table behind it.
         val behind = buffers.flatMap { (target, fronts) -> fronts.map { it to target } }.toMap()
-        ch.query(
+        return ch.query(
             """
             SELECT t, substring(q, 1, 20000) AS q, substring(normalizeQuery(q), 1, 4000) AS nq, toInt64(c) AS c,
                    toInt64(sum(c) OVER (PARTITION BY t)) AS total
@@ -351,8 +379,5 @@ class ScanService(
         }.entries.groupBy({ behind[it.key] ?: it.key }, { it.value }).mapValues { (_, parts) ->
             parts.flatMap { it.first }.sortedByDescending { it.count }.take(20) to parts.sumOf { it.second }
         }
-    } catch (e: Exception) {
-        log.info("query_log is not readable: {}", e.message)
-        null
     }
 }

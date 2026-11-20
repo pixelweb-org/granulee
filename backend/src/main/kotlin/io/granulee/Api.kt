@@ -32,7 +32,15 @@ data class SourceDto(
     val nextScanAt: String?,
     val tables: Int?,
     val compressedBytes: Long?,
+    /** Whether the last scan could use system.query_log; null before the first scan. */
+    val queryLog: QueryLogStatus? = null,
 )
+
+/**
+ * ok: readable and has entries. missing: the server keeps no query log. denied: the source's user may not
+ * read it. empty: it exists but holds nothing in the window. error: reading failed for another reason.
+ */
+data class QueryLogStatus(val state: String, val message: String? = null)
 
 data class SourceInput(
     val id: String? = null, // only read by /api/sources/test
