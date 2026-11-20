@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/pixelweb-org/granulee/compare/v0.4.0...v0.5.0) (2026-11-20)
+
+
+### Features
+
+* run OPTIMIZE FINAL after applying a trial and follow its state ([e3035c9](https://github.com/pixelweb-org/granulee/commit/e3035c9937ad7d19d420f43962187809d336b6f3))
+* usage page per table from system.query_log ([c8fe549](https://github.com/pixelweb-org/granulee/commit/c8fe5492c2a1e4d4f49706d8b4325c6be7641717))
+
 ## [0.4.0](https://github.com/pixelweb-org/granulee/compare/v0.3.1...v0.4.0) (2026-11-20)
 
 
