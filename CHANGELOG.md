@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/pixelweb-org/granulee/compare/v0.3.1...v0.4.0) (2026-11-20)
+
+
+### Features
+
+* show how many files a table is on disk ([760bd56](https://github.com/pixelweb-org/granulee/commit/760bd56783b971835c962d19dac5bbb01e171745))
+
 ## [0.3.1](https://github.com/pixelweb-org/granulee/compare/v0.3.0...v0.3.1) (2026-11-19)
 
 
