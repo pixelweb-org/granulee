@@ -319,14 +319,14 @@ export function SourcesPage() {
           </fieldset>
 
           <div className="row" style={vars({ gap: 16 })}>
-            <button type="submit" className="nv-btn nv-btn-primary" disabled={!valid || save.busy} aria-busy={save.busy || undefined}>
+            <button type="submit" className="cc-btn cc-btn--primary" disabled={!valid || save.busy} aria-busy={save.busy || undefined}>
               {save.busy ? 'Saving…' : editing ? 'Save changes' : 'Save source'}
             </button>
             <Button variant="secondary" busy={testing.busy} disabled={!form.host.trim()} onClick={onTest}>
               {testing.busy ? 'Testing…' : 'Test connection'}
             </Button>
             {editing ? (
-              <Button variant="ghost" onClick={reset}>
+              <Button variant="link" onClick={reset}>
                 Cancel edit
               </Button>
             ) : null}
@@ -363,7 +363,7 @@ export function SourcesPage() {
           onClose={() => setDeleting(null)}
           actions={
             <>
-              <Button variant="ghost" onClick={() => setDeleting(null)}>
+              <Button variant="secondary" onClick={() => setDeleting(null)}>
                 Cancel
               </Button>
               <Button

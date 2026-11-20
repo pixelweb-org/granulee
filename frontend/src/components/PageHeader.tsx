@@ -16,13 +16,13 @@ export function PageHeader({ eyebrow, title, titleAside, description, actions }:
       <div className="page-header-text">
         {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
         <div className="row" style={vars({ gap: 12 })}>
-          <h1 className="display-md">{title}</h1>
+          <h1 className="display-md g-wrap">{title}</h1>
           {titleAside}
         </div>
         {description ? <div className="body muted">{description}</div> : null}
       </div>
       {actions ? (
-        <div className="row" style={vars({ gap: 16 })}>
+        <div className="row" style={vars({ gap: 8 })}>
           {actions}
         </div>
       ) : null}

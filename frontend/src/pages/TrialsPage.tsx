@@ -116,9 +116,9 @@ export function TrialsPage() {
                       <td className="r nowrap">{fmtBytes(t.scratchBytes)}</td>
                       <td className="r nowrap">{fmtClock(t.createdAt, true)}</td>
                       <td className="r">
-                        <Button variant="secondary" onClick={() => setRemoving(t)}>
+                        <button type="button" className="cc-btn cc-btn--link is-ink" onClick={() => setRemoving(t)}>
                           Remove
-                        </Button>
+                        </button>
                       </td>
                     </tr>
                   ))}

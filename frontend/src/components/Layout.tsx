@@ -21,6 +21,19 @@ function scanCaption(sources: Source[]): string {
   return `Last full scan ${fmtClock(last)}${until ? ` · next ${until}` : ''}`;
 }
 
+/** The mark: a dark tile, a white G and one orange granule. */
+function Logo() {
+  return (
+    <svg aria-hidden="true" width="32" height="32" viewBox="0 0 64 64">
+      <rect x="0" y="0" width="64" height="64" rx="9" fill="#232f3e" />
+      <text x="29" y="46" textAnchor="middle" fontFamily="Verdana, Arial, sans-serif" fontWeight="700" fontSize="40" fill="#ffffff">
+        G
+      </text>
+      <rect x="44" y="44" width="12" height="12" rx="2" fill="#ff9900" />
+    </svg>
+  );
+}
+
 export function Layout() {
   const { sources, selectedId, selected, select } = useSources();
   const { pathname } = useLocation();
@@ -37,6 +50,7 @@ export function Layout() {
     <div className="app">
       <aside className="sidebar">
         <Link to="/" className="brand">
+          <Logo />
           Granulee
         </Link>
         <div className="sidebar-source">

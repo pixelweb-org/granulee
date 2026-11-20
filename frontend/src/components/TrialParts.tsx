@@ -36,7 +36,7 @@ export function TrialProgressCard({ trial, onChanged, titleTo }: { trial: Trial;
           <h2 className="subhead">{titleTo ?? `${trial.table} · ${trial.name}`}</h2>
         </div>
         <Button
-          variant="secondary"
+          variant="link"
           busy={cancel.busy}
           onClick={async () => {
             if (await cancel.run(() => api.cancelTrial(trial.id))) onChanged();
@@ -72,7 +72,7 @@ export function RemoveTrialDialog({ trial, onClose, onRemoved }: { trial: Trial;
       onClose={onClose}
       actions={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
           <Button
@@ -117,7 +117,7 @@ export function ApplyTrialDialog({ trial, onClose, onStarted }: { trial: Trial; 
       onClose={onClose}
       actions={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose}>
             {runnable ? 'Cancel' : 'Close'}
           </Button>
           {runnable ? (
@@ -170,7 +170,7 @@ export function OptimizeTrialDialog({ trial, onClose, onStarted }: { trial: Tria
       onClose={onClose}
       actions={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
           <Button

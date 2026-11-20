@@ -1,25 +1,23 @@
-/* ClickHouse Neon Volt tokens, plus the app's shared variable names mapped onto them. Dark only. */
+/* Estilo (Compra Contínua) tokens, plus the app's shared variable names mapped onto them. Light only. */
 :root {
-  --black: #000000; --surface: #141414; --charcoal: #414141; --border-subtle: #414141cc; --silver: #a0a0a0;
-  --neon: #faff69; --neon-hover: #e6eb5f; --pale-yellow: #f4f692; --forest: #166534; --forest-hover: #14532d;
-  --olive: #4f5100; --danger: #ff6b6b;
-  --chart-accent: var(--neon); --chart-7: #9085e9; --chart-8: #e66767; --chart-other: #6b6b6b; --chart-grid: #2a2a2a;
-  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  --space-0-5: 4px; --space-1: 8px; --space-1-5: 12px; --space-2: 16px; --space-3: 24px; --space-4: 32px; --space-6: 48px; --space-8: 64px; --space-16: 128px;
-  --radius-none: 0px; --radius-sm: 4px; --radius-md: 8px; --radius-lg: 12px;
-  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.06); --shadow-lift: 0 6px 16px rgba(0, 0, 0, 0.5);
-  --shadow-inset-selected: inset 0 0 0 2px #faff69; --shadow-inset-press: inset 0 2px 4px rgba(0, 0, 0, 0.35);
-  --z-base: 0; --z-sticky-nav: 100; --z-overlay: 200; --z-modal: 300; --z-toast: 500;
+  --laranja-varejo: #ff9900; --cinza-escuro: #232f3e; --branco: #ffffff; --bg-start: #f7fafa; --cinza-claro: #dddddd;
+  --verde-azulado: #00a8e1; --verde: #008000; --dourado: #ffd700; --cinza-texto: #5b6470; --superficie-2: #eef1f1;
+  --laranja-hover: #e68a00; --laranja-texto: #a85d00; --azul-texto: #0072a3; --erro: #c40000;
+  --chart-1: #c26200; --chart-2: #2f5f9e; --chart-3: #0095c8; --chart-4: #c9a200; --chart-5: #00897b; --chart-6: #7d56b8;
+  --chart-accent: var(--chart-1); --chart-other: #8a9099; --chart-grid: var(--cinza-claro); --chart-muted: var(--chart-other);
+  --font-sans: Verdana, Arial, sans-serif; --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --space-1: 0.5rem; --space-3: 1.5rem;
+  --radius-sm: 3px; --radius-md: 6px; --radius-lg: 9px;
+  --shadow-product: 0 1px 3px rgba(0, 0, 0, 0.12); --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.06);
+  --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.12); --shadow-lift: 0 4px 12px rgba(0, 0, 0, 0.12); --shadow-heavy: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-inset-selected: inset 0 0 0 2px #ff9900;
+  --z-base: 0; --z-sticky: 100; --z-overlay: 200; --z-modal: 300; --z-toast: 500;
 
-  /* App names → Neon Volt */
-  --canvas: var(--black); --surface-1: var(--surface); --surface-2: #1c1c1c; --surface-3: var(--charcoal);
-  --hairline: var(--border-subtle); --hairline-soft: var(--chart-grid); --hairline-translucent: var(--border-subtle); --input-border: var(--silver);
-  --inverse-canvas: var(--neon); --inverse-ink: var(--black);
-  --ink: #f5f5ef; --ink-muted: var(--silver); --ink-subtle: var(--silver);
-  --semantic-success: var(--neon); --semantic-warning: var(--pale-yellow); --semantic-error: var(--danger);
-  --chart-1: #3987e5; --chart-2: #d95926; --chart-3: #199e70; --chart-4: #c98500; --chart-5: #d55181; --chart-6: #0ca30c; --chart-muted: var(--chart-other);
-  --row-hover: #faff690a;
-  --overlay: rgba(0, 0, 0, 0.72);
-  color-scheme: dark;
+  /* App names → Estilo */
+  --canvas: var(--branco); --surface-1: var(--bg-start); --surface-2: var(--superficie-2); --surface-3: var(--cinza-claro);
+  --hairline: var(--cinza-claro); --hairline-soft: var(--cinza-claro); --input-border: var(--cinza-texto);
+  --ink: var(--cinza-escuro); --ink-muted: var(--cinza-texto);
+  --semantic-success: var(--verde); --semantic-warning: var(--laranja-texto); --semantic-error: var(--erro);
+  --overlay: rgba(35, 47, 62, 0.6);
+  color-scheme: light;
 }

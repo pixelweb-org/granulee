@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import type { ChangeKind, Recommendation, RecommendationCategory, Severity } from '../api/types';
 import { useAction, useApi } from '../hooks/useApi';
-import { Button } from '../components/Button';
+import { Button, Choice } from '../components/Button';
 import { Card, StatTile } from '../components/Card';
 import { BytesChart } from '../components/BytesChart';
 import { CopyButton } from '../components/CodeBlock';
@@ -11,6 +11,7 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState, ErrorState, InlineError, Loading } from '../components/States';
 import { Status, type Tone } from '../components/StatusDot';
 import { fmtBytes, fmtBytesPair, fmtClock, fmtInt, fmtPct, fmtRows } from '../lib/format';
+import { download } from '../lib/download';
 import { routes } from '../lib/routes';
 import { vars } from '../lib/style';
 
@@ -36,17 +37,6 @@ const GROUPS: { key: Group; label: string }[] = [
   { key: 'types', label: 'Data types' },
   { key: 'indexes', label: 'Skip indexes' },
 ];
-
-function download(name: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/sql' }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
 
 export function RecommendationsPage() {
   const { sourceId = '', database = '', table = '' } = useParams();
@@ -169,13 +159,13 @@ export function RecommendationsPage() {
 
       {n ? (
         <div role="group" aria-label="Filter recommendations" className="row">
-          <button type="button" className="nv-btn nv-btn-ghost" aria-pressed={activeGroup === 'all'} onClick={() => setGroup('all')}>
+          <Choice pressed={activeGroup === 'all'} onClick={() => setGroup('all')}>
             All {n}
-          </button>
+          </Choice>
           {GROUPS.filter((g) => counts[g.key] > 0).map((g) => (
-            <button key={g.key} type="button" className="nv-btn nv-btn-ghost" aria-pressed={activeGroup === g.key} onClick={() => setGroup(g.key)}>
+            <Choice key={g.key} pressed={activeGroup === g.key} onClick={() => setGroup(g.key)}>
               {g.label} {counts[g.key]}
-            </button>
+            </Choice>
           ))}
         </div>
       ) : null}
@@ -254,7 +244,7 @@ function RecommendationCard({ rec, busy, onDismiss }: { rec: Recommendation; bus
               {showQueries ? 'Hide queries' : 'Show queries'}
             </Button>
           ) : null}
-          <Button variant="ghost" disabled={busy} onClick={onDismiss}>
+          <Button variant="link" disabled={busy} onClick={onDismiss}>
             Dismiss
           </Button>
         </div>

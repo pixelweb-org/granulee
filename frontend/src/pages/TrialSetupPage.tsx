@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useId, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import type { Sampling, TrialPlan, TrialPlanColumn, TrialPlanRecommendation, TrialRequest } from '../api/types';
@@ -8,8 +8,7 @@ import { Card } from '../components/Card';
 import { Checkbox, Select, TextInput } from '../components/Form';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState, ErrorState, InlineError, Loading } from '../components/States';
-import { StatusDot } from '../components/StatusDot';
-import { fmtBytes, fmtInt, fmtRows } from '../lib/format';
+import { fmtBytes, fmtInt, fmtPct, fmtRows } from '../lib/format';
 import { routes } from '../lib/routes';
 import { vars } from '../lib/style';
 import { COMPRESSORS, ENCODINGS, buildCodec, levelsOf, parseCodec, standardLevel, type CodecParts, type Compressor } from '../lib/codec';
@@ -17,18 +16,19 @@ import { COMPRESSORS, ENCODINGS, buildCodec, levelsOf, parseCodec, standardLevel
 const normalEncoding = (text: string) => text.trim().replace(/,\s*$/, '');
 
 /** The codec in front of the compressor, typed freely. Keeps what is being typed ("Delta, ") while the schema holds the clean value. */
-function EncodingInput({ label, value, onChange }: { label: string; value: string; onChange: (encoding: string) => void }) {
+function EncodingInput({ label, value, onChange, readOnly }: { label: string; value: string; onChange: (encoding: string) => void; readOnly?: boolean }) {
   const [text, setText] = useState(value);
   // The schema changed from outside (a recommendation was ticked): show that instead of the draft.
   const shown = normalEncoding(text) === value ? text : value;
   return (
     <input
-      className="nv-input cell g-mono"
+      className="cc-field__input cc-field__input--sm"
       aria-label={label}
       list="codec-encodings"
       placeholder="none"
       spellCheck={false}
       autoComplete="off"
+      readOnly={readOnly}
       value={shown}
       onChange={(e) => {
         setText(e.target.value);
@@ -147,6 +147,10 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
   const [optimizeFinal, setOptimizeFinal] = useState(true);
   const [columnScans, setColumnScans] = useState(true);
   const [runs, setRuns] = useState('5');
+  // Columns put on the change list by hand, before they differ from the baseline.
+  const [extra, setExtra] = useState<string[]>([]);
+  const [adding, setAdding] = useState('');
+  const [showAll, setShowAll] = useState(false);
 
   function toggleRec(rec: TrialPlanRecommendation, on: boolean) {
     const nextTicked = on ? [...ticked, rec.id] : ticked.filter((id) => id !== rec.id);
@@ -206,30 +210,39 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
     });
   }
 
+  const picked = (name: string) => extra.includes(name);
+  const listed = plan.columns.filter((c) => changedCols.includes(c.name) || picked(c.name));
+  const unlisted = plan.columns.filter((c) => !changedCols.includes(c.name) && !picked(c.name));
+  const bySize = [...unlisted].sort((a, b) => b.compressedBytes - a.compressedBytes);
+  const indexBytes = plan.indexDetails.reduce((a, i) => a + i.compressedBytes, 0);
+  const sameKey = (a: string, b: string) => a.trim() === b.trim();
+
+  function reset(c: TrialPlanColumn) {
+    setCol(c.name, { type: c.baselineType, codec: baselineCodec(c) });
+    setExtra((x) => x.filter((n) => n !== c.name));
+    // A ticked recommendation for this column no longer holds.
+    setTicked((t) => t.filter((id) => plan.recommendations.find((r) => r.id === id)?.column?.name !== c.name));
+  }
+
   return (
     <div className="split">
-      <div className="split-main stack" style={{ flexBasis: 640, ...vars({ gap: 24 }) }}>
+      <div className="split-main stack" style={vars({ gap: 24 })}>
         {!plan.trialsEnabled ? (
-          <div className="notice body-sm" role="status">
-            <span style={{ paddingTop: 6 }}>
-              <StatusDot tone="warning" />
-            </span>
-            <span>
-              Trials are switched off for {plan.sourceName}. Allow sample trials and set a scratch database in{' '}
-              <Link className="g-link" to="/sources">
-                Data sources
-              </Link>{' '}
-              to start one.
-            </span>
-          </div>
+          <p className="g-notice" role="status">
+            Trials are switched off for {plan.sourceName}. Allow sample trials and set a scratch database in{' '}
+            <Link className="g-link" to="/sources">
+              Data sources
+            </Link>{' '}
+            to start one.
+          </p>
         ) : null}
 
-        <Card as="section">
+        <Card as="section" style={{ gap: 12 }}>
           <StepHead step="Step 1" title="Start from recommendations">
-            Ticking one fills in the column and key changes below. You can edit them afterwards.
+            Ticking one adds it to the changes below. You can edit it afterwards.
           </StepHead>
           {plan.recommendations.length ? (
-            <div className="grid-auto" style={vars({ min: 300, gap: '4px 24px' })}>
+            <div className="grid-auto" style={vars({ min: 300, gap: '0 24px' })}>
               {plan.recommendations.map((r) => (
                 <Checkbox key={r.id} checked={ticked.includes(r.id)} onChange={(on) => toggleRec(r, on)}>
                   {r.label}
@@ -241,134 +254,148 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
           )}
         </Card>
 
-        <Card as="section">
+        <Card as="section" style={{ gap: 20 }}>
           <StepHead step="Step 2" title="Candidate schema">
-            Set type, codec, compression and level per column, recommended or not. The codec takes parameters and chains, such as Delta(4) or Delta, T64. Changed columns carry a dot.
+            Only what differs from the baseline is listed. Add any other column to change its type, codec, compression or level. The codec field takes parameters and
+            chains, such as Delta(4) or Delta, T64.
           </StepHead>
-          <div className="grid-2" style={vars({ gap: 16 })}>
-            <TextInput
+          <div className="grid-auto" style={vars({ min: 280, gap: 16 })}>
+            <KeyInput
               label="Partition key"
               value={schema.partitionKey}
-              onChange={(e) => setSchema((s) => ({ ...s, partitionKey: e.target.value }))}
-              help={`Baseline: ${plan.partitionKey || 'none'}`}
+              onChange={(v) => setSchema((s) => ({ ...s, partitionKey: v }))}
+              help={sameKey(schema.partitionKey, plan.partitionKey) ? 'Same as baseline' : `Baseline: ${plan.partitionKey || 'none'}`}
             />
-            <TextInput
+            <KeyInput
               label="Sorting key"
               value={schema.sortingKey}
-              onChange={(e) => setSchema((s) => ({ ...s, sortingKey: e.target.value }))}
-              help={`Baseline: ${plan.sortingKey || 'none'}`}
+              onChange={(v) => setSchema((s) => ({ ...s, sortingKey: v }))}
+              help={sameKey(schema.sortingKey, plan.sortingKey) ? 'Same as baseline' : `Baseline: ${plan.sortingKey || 'none'}`}
             />
           </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="g-tbl dense">
-              <thead>
-                <tr>
-                  <th>Column · baseline</th>
-                  <th>Type</th>
-                  <th>Codec</th>
-                  <th>Compression</th>
-                  <th>Level</th>
-                </tr>
-              </thead>
-              <tbody>
-                {plan.columns.map((c) => {
-                  const cur = schema.cols[c.name];
-                  const changed = changedCols.includes(c.name);
-                  const types = c.typeOptions.includes(cur.type) ? c.typeOptions : [cur.type, ...c.typeOptions];
-                  const codec = parseCodec(cur.codec);
-                  const levels = levelsOf(codec.compressor);
-                  // A level the server accepts but the list lacks (LZ4HC(0)) stays selectable.
-                  const levelOptions = codec.level != null && !levels.includes(codec.level) ? [codec.level, ...levels] : levels;
-                  const setCodec = (patch: Partial<CodecParts>) => setCol(c.name, { codec: buildCodec({ ...codec, ...patch }) });
-                  return (
-                    <tr key={c.name} className={changed ? 'is-changed' : undefined}>
-                      <td>
-                        <div className="row ink" style={vars({ gap: 6 })}>
-                          <strong style={{ overflowWrap: 'anywhere' }}>{c.name}</strong>
-                          {changed ? (
-                            <span className="dot dot-success" title="Changed">
-                              <span className="sr-only">Changed</span>
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="g-mono cell-sub">
-                          {c.baselineType} · {c.baselineCodec}
-                        </div>
-                      </td>
-                      <td style={{ minWidth: 150 }}>
-                        <select className="g-select cell" aria-label={`Type for ${c.name}`} value={cur.type} onChange={(e) => setCol(c.name, { type: e.target.value })}>
-                          {types.map((t) => (
-                            <option key={t} value={t}>
-                              {t}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td style={{ minWidth: 120 }}>
-                        <EncodingInput label={`Codec for ${c.name}`} value={codec.encoding} onChange={(encoding) => setCodec({ encoding })} />
-                      </td>
-                      <td style={{ minWidth: 92 }}>
-                        <select
-                          className="g-select cell"
-                          aria-label={`Compression for ${c.name}`}
-                          value={codec.compressor}
-                          onChange={(e) => {
-                            const compressor = e.target.value as Compressor;
-                            setCodec({ compressor, level: standardLevel(compressor) });
-                          }}
-                        >
-                          {COMPRESSORS.map((o) => (
-                            <option key={o.value} value={o.value}>
-                              {o.label}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td style={{ minWidth: 64 }}>
-                        <select
-                          className="g-select cell g-num"
-                          aria-label={`Compression level for ${c.name}`}
-                          disabled={!levelOptions.length}
-                          value={codec.level ?? ''}
-                          onChange={(e) => setCodec({ level: Number(e.target.value) })}
-                        >
-                          {levelOptions.length ? null : <option value="">—</option>}
-                          {levelOptions.map((l) => (
-                            <option key={l} value={l}>
-                              {l}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <datalist id="codec-encodings">
-              {ENCODINGS.map((e) => (
-                <option key={e} value={e} />
-              ))}
-            </datalist>
-          </div>
-          {plan.indexes.length ? (
-            <div className="grid-auto" style={vars({ min: 300, gap: '4px 24px' })}>
-              {plan.indexes.map((idx) => (
-                <Checkbox
-                  key={idx}
-                  checked={schema.dropIndexes.includes(idx)}
-                  onChange={(on) => setSchema((s) => ({ ...s, dropIndexes: on ? [...s.dropIndexes, idx] : s.dropIndexes.filter((i) => i !== idx) }))}
+
+          <div className="stack" style={vars({ gap: 8 })}>
+            <h3 className="subhead">
+              Changed columns <span className="g-count g-num">{listed.length}</span>
+            </h3>
+            {listed.length ? (
+              <div className="box-em">
+                <ColumnTable>
+                  {listed.map((c) => (
+                    <ColumnRow key={c.name} column={c} value={schema.cols[c.name]} onChange={(patch) => setCol(c.name, patch)} onReset={() => reset(c)} />
+                  ))}
+                </ColumnTable>
+              </div>
+            ) : (
+              <p className="body-sm muted">No column differs from the baseline yet. Tick a recommendation above or add a column below.</p>
+            )}
+            {bySize.length ? (
+              <div className="row" style={{ alignItems: 'flex-end', ...vars({ gap: 12 }) }}>
+                <div className="cc-field" style={{ flex: '1 1 280px', maxWidth: 420 }}>
+                  <label htmlFor="add-column" className="cc-field__label">
+                    Change another column
+                  </label>
+                  <select id="add-column" className="g-select" aria-describedby="add-column-help" value={adding} onChange={(e) => setAdding(e.target.value)}>
+                    <option value="">Pick a column…</option>
+                    {bySize.map((c) => (
+                      <option key={c.name} value={c.name}>
+                        {c.name} · {c.baselineType}
+                        {c.compressedBytes > 0 ? ` · ${fmtBytes(c.compressedBytes)}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <span id="add-column-help" className="cc-field__help">
+                    Sorted by compressed size, largest first
+                  </span>
+                </div>
+                <Button
+                  variant="dark"
+                  disabled={!adding}
+                  onClick={() => {
+                    setExtra((x) => [...x, adding]);
+                    setAdding('');
+                  }}
                 >
-                  Drop skip index {idx}
-                </Checkbox>
-              ))}
+                  Add column
+                </Button>
+              </div>
+            ) : null}
+          </div>
+
+          {unlisted.length ? (
+            <div className="stack" style={vars({ gap: 0 })}>
+              <button type="button" className="g-rowbtn" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
+                <span className="body-sm g-act">{showAll ? 'Hide' : 'Show'}</span>
+                <span className="body-sm muted">
+                  {fmtInt(unlisted.length)} unchanged {unlisted.length === 1 ? 'column' : 'columns'}, same as baseline
+                </span>
+              </button>
+              {showAll ? (
+                <div style={{ overflowX: 'auto' }}>
+                  <ColumnTable>
+                    {unlisted.map((c) => (
+                      <ColumnRow key={c.name} column={c} value={schema.cols[c.name]} />
+                    ))}
+                  </ColumnTable>
+                </div>
+              ) : null}
             </div>
           ) : null}
+
+          {plan.indexDetails.length ? (
+            <div className="stack" style={vars({ gap: 8 })}>
+              <h3 className="subhead">Skip indexes</h3>
+              <p className="body-sm muted">
+                {fmtInt(plan.indexDetails.length)} {plan.indexDetails.length === 1 ? 'index' : 'indexes'}, {fmtBytes(indexBytes)} compressed. Drop one in the candidate to
+                see what it costs on inserts and saves on reads.
+              </p>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="g-tbl" style={{ minWidth: 640 }}>
+                  <thead>
+                    <tr>
+                      <th>Index</th>
+                      <th>Expression</th>
+                      <th>Type</th>
+                      <th className="r">Compressed</th>
+                      <th style={{ width: 200 }}>Candidate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {plan.indexDetails.map((idx) => (
+                      <tr key={idx.name}>
+                        <td className="g-strong">{idx.name}</td>
+                        <td className="g-mono g-wrap">{idx.expression}</td>
+                        <td className="g-mono">{idx.type}</td>
+                        <td className="r nowrap">{fmtBytes(idx.compressedBytes)}</td>
+                        <td>
+                          <label className="check" style={{ display: 'inline-flex', gap: 8 }}>
+                            <input
+                              type="checkbox"
+                              checked={schema.dropIndexes.includes(idx.name)}
+                              onChange={(e) =>
+                                setSchema((s) => ({ ...s, dropIndexes: e.target.checked ? [...s.dropIndexes, idx.name] : s.dropIndexes.filter((i) => i !== idx.name) }))
+                              }
+                            />{' '}
+                            Drop in candidate
+                          </label>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+          <datalist id="codec-encodings">
+            {ENCODINGS.map((e) => (
+              <option key={e} value={e} />
+            ))}
+          </datalist>
         </Card>
 
         <Card as="section">
           <StepHead step="Step 3" title="Sample size" />
-          <div className="grid-2" style={vars({ gap: 16 })}>
+          <div className="grid-auto" style={{ alignItems: 'start', ...vars({ min: 280, gap: 16 }) }}>
             <TextInput
               label="Rows to copy"
               numeric
@@ -378,8 +405,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
               help={
                 <>
                   Recommended: {fmtInt(plan.recommendedRows)}
-                  {plan.totalRows > 0 ? ` of ${fmtRows(plan.totalRows)} rows` : ''}. Codecs and sorting keys only show their real effect on enough rows; below 10 M the
-                  numbers get noisy.
+                  {plan.totalRows > 0 ? ` of ${fmtRows(plan.totalRows)} rows (${fmtPct(plan.recommendedRows / plan.totalRows, 0)})` : ''}. Below 10 M the numbers get noisy.
                 </>
               }
             />
@@ -397,18 +423,13 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
           {sampling === 'where' ? (
             <TextInput label="WHERE clause" value={where} onChange={(e) => setWhere(e.target.value)} placeholder="event_date >= today() - 30" help="Without the WHERE keyword." />
           ) : null}
-          {tooFew ? (
-            <p className="status body-sm">
-              <StatusDot tone="warning" />
-              Warning: fewer than 10 M rows. Results may not reflect the full table.
-            </p>
-          ) : null}
+          {tooFew ? <p className="g-notice">Fewer than 10 M rows. Results may not reflect the full table.</p> : null}
           {plan.totalRows > 0 && n > plan.totalRows ? (
             <p className="body-sm muted">The table has {fmtInt(plan.totalRows)} rows, so the trial copies all of them.</p>
           ) : null}
         </Card>
 
-        <Card as="section" style={{ gap: 12 }}>
+        <Card as="section" style={{ gap: 8 }}>
           <StepHead step="Step 4" title="Performance test" />
           <Checkbox checked={replayQueries} onChange={setReplayQueries} disabled={plan.replayableQueries === 0}>
             {plan.replayableQueries > 0
@@ -424,7 +445,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
           <Checkbox checked={columnScans} onChange={setColumnScans}>
             Full scan per column to compare read speed
           </Checkbox>
-          <div style={{ maxWidth: 280 }}>
+          <div style={{ maxWidth: 280, marginTop: 8 }}>
             <TextInput label="Runs per query" type="number" min={1} max={20} value={runs} onChange={(e) => setRuns(e.target.value)} help="Median is reported; first run is a warm-up" />
           </div>
         </Card>
@@ -434,34 +455,156 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
         <h2 className="subhead">Trial summary</h2>
         <TextInput label="Name" value={name} onChange={(e) => setName(e.target.value)} />
         <dl className="summary">
-          <dt className="muted">Changes</dt>
+          <dt>Changes</dt>
           <dd className="g-num">{changes.length ? changes.join(' · ') : 'None yet'}</dd>
-          <dt className="muted">Rows</dt>
+          <dt>Rows</dt>
           <dd className="g-num">{fmtRows(effectiveRows)}</dd>
-          <dt className="muted">Scratch space needed</dt>
+          <dt>Scratch space needed</dt>
           <dd className="g-num">{scratchNeeded > 0 ? `≈ ${fmtBytes(scratchNeeded)}` : '—'}</dd>
-          <dt className="muted">Free in {plan.scratchDatabase || 'scratch'}</dt>
+          <dt>Free in {plan.scratchDatabase || 'scratch'}</dt>
           <dd className="g-num">{plan.scratchFreeBytes != null ? fmtBytes(plan.scratchFreeBytes) : 'unknown'}</dd>
         </dl>
-        {noSpace ? (
-          <p className="status body-sm">
-            <StatusDot tone="error" />
-            The estimate is larger than the free space.
-          </p>
-        ) : null}
-        <p className="caption muted">
-          Tables: {plan.scratchDatabase || 'scratch'}.{plan.table}_trial_&lt;id&gt;_base and _cand. They stay until you remove the trial.
-        </p>
+        {noSpace ? <p className="g-notice">The estimate is larger than the free space.</p> : null}
+        <div className="stack" style={vars({ gap: 4 })}>
+          <span className="caption muted">Tables, kept until you remove the trial</span>
+          <span className="g-mono g-wrap">
+            {plan.scratchDatabase || 'scratch'}.{plan.table}_trial_&lt;id&gt;_base
+          </span>
+          <span className="g-mono g-wrap">
+            {plan.scratchDatabase || 'scratch'}.{plan.table}_trial_&lt;id&gt;_cand
+          </span>
+        </div>
         {nothingChanged ? <p className="caption muted">Change at least one key, column or index to have something to compare.</p> : null}
         <Button stretch disabled={!canStart} busy={start.busy} onClick={submit}>
           {start.busy ? 'Starting…' : 'Start trial'}
         </Button>
-        <Button variant="ghost" stretch to={routes.recommendations(plan.sourceId, plan.database, plan.table)}>
+        <Button variant="secondary" stretch to={routes.recommendations(plan.sourceId, plan.database, plan.table)}>
           Cancel
         </Button>
         <InlineError message={start.error} />
       </Card>
     </div>
+  );
+}
+
+function KeyInput({ label, value, onChange, help }: { label: string; value: string; onChange: (value: string) => void; help: string }) {
+  const id = useId();
+  return (
+    <div className="cc-field">
+      <label htmlFor={id} className="cc-field__label">
+        {label}
+      </label>
+      <input id={id} className="cc-field__input g-mono" spellCheck={false} aria-describedby={`${id}-help`} value={value} onChange={(e) => onChange(e.target.value)} />
+      <span id={`${id}-help`} className="cc-field__help g-wrap">
+        {help}
+      </span>
+    </div>
+  );
+}
+
+function ColumnTable({ children }: { children: ReactNode }) {
+  return (
+    <table className="g-tbl" style={{ minWidth: 760 }}>
+      <thead>
+        <tr>
+          <th>Column · baseline</th>
+          <th style={{ width: '24%' }}>Type</th>
+          <th style={{ width: '18%' }}>Codec</th>
+          <th style={{ width: '14%' }}>Compression</th>
+          <th style={{ width: '10%' }}>Level</th>
+          <th style={{ width: 90 }}>
+            <span className="sr-only">Reset</span>
+          </th>
+        </tr>
+      </thead>
+      <tbody>{children}</tbody>
+    </table>
+  );
+}
+
+/** One column of the candidate. Without `onChange` it only shows what the baseline has. */
+function ColumnRow({
+  column: c,
+  value,
+  onChange,
+  onReset,
+}: {
+  column: TrialPlanColumn;
+  value: { type: string; codec: string };
+  onChange?: (patch: Partial<{ type: string; codec: string }>) => void;
+  onReset?: () => void;
+}) {
+  const locked = !onChange;
+  const types = c.typeOptions.includes(value.type) ? c.typeOptions : [value.type, ...c.typeOptions];
+  const codec = parseCodec(value.codec);
+  const levels = levelsOf(codec.compressor);
+  // A level the server accepts but the list lacks (LZ4HC(0)) stays selectable.
+  const levelOptions = codec.level != null && !levels.includes(codec.level) ? [codec.level, ...levels] : levels;
+  const setCodec = (patch: Partial<CodecParts>) => onChange?.({ codec: buildCodec({ ...codec, ...patch }) });
+  return (
+    <tr>
+      <td>
+        <span className="ink g-wrap" style={{ fontWeight: 700 }}>
+          {c.name}
+        </span>
+        <div className="g-mono muted g-wrap">
+          {c.baselineType} · {c.baselineCodec}
+        </div>
+      </td>
+      <td>
+        <select className="g-select g-select--sm" aria-label={`Type for ${c.name}`} disabled={locked} value={value.type} onChange={(e) => onChange?.({ type: e.target.value })}>
+          {types.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td>
+        <EncodingInput label={`Codec for ${c.name}`} value={codec.encoding} readOnly={locked} onChange={(encoding) => setCodec({ encoding })} />
+      </td>
+      <td>
+        <select
+          className="g-select g-select--sm"
+          aria-label={`Compression for ${c.name}`}
+          disabled={locked}
+          value={codec.compressor}
+          onChange={(e) => {
+            const compressor = e.target.value as Compressor;
+            setCodec({ compressor, level: standardLevel(compressor) });
+          }}
+        >
+          {COMPRESSORS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td>
+        <select
+          className="g-select g-select--sm g-num"
+          aria-label={`Level for ${c.name}`}
+          disabled={locked || !levelOptions.length}
+          value={codec.level ?? ''}
+          onChange={(e) => setCodec({ level: Number(e.target.value) })}
+        >
+          {levelOptions.length ? null : <option value="">—</option>}
+          {levelOptions.map((l) => (
+            <option key={l} value={l}>
+              {l}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td className="r">
+        {onReset ? (
+          <button type="button" className="cc-btn cc-btn--secondary cc-btn--tight" onClick={onReset}>
+            Reset
+          </button>
+        ) : null}
+      </td>
+    </tr>
   );
 }
 

@@ -389,56 +389,53 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
             ) : null}
           </div>
           {r.queries.length ? (
-            <Card table>
-              <table className="g-tbl">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Query (normalized)</th>
-                    <th className="r">Share</th>
-                    <th className="r">Baseline</th>
-                    <th className="r">Candidate</th>
-                    <th className="r">Rows read</th>
-                    <th>Result</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {r.queries.map((q) => {
-                    const speed = q.baseMs != null && q.candMs != null ? fmtSpeed(q.baseMs, q.candMs) : null;
-                    const bad = !!speed && speed.slower && q.candMs! > q.baseMs! * 1.05;
-                    return (
-                      <tr key={q.label} className={bad ? 'is-changed' : undefined}>
-                        <td>{q.label}</td>
-                        <td className="g-mono" style={{ maxWidth: 460, minWidth: 240, overflowWrap: 'anywhere' }}>
-                          {q.query}
-                        </td>
-                        <td className="r">{fmtPct(q.share, 0)}</td>
-                        <td className="r nowrap">{fmtMs(q.baseMs)}</td>
-                        <td className="r g-strong nowrap">{fmtMs(q.candMs)}</td>
-                        <td className="r nowrap">
-                          {q.baseReadRows != null && q.candReadRows != null ? `${fmtRows(q.baseReadRows)} → ${fmtRows(q.candReadRows)}` : '—'}
-                        </td>
-                        <td className="caption ink">
-                          {q.error ? (
-                            <span className="status" style={{ overflowWrap: 'anywhere' }}>
-                              <StatusDot tone="muted" />
-                              Not run: {q.error}
-                            </span>
-                          ) : speed ? (
-                            <span className="status nowrap">
-                              {bad ? <StatusDot tone="error" /> : null}
-                              {speed.text}
-                            </span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </Card>
+            <ol className="stack" style={{ listStyle: 'none', margin: 0, padding: 0, ...vars({ gap: 12 }) }}>
+              {r.queries.map((q) => {
+                const speed = q.baseMs != null && q.candMs != null ? fmtSpeed(q.baseMs, q.candMs) : null;
+                const bad = !!speed && speed.slower && q.candMs! > q.baseMs! * 1.05;
+                return (
+                  <li key={q.label} className={`card card-row${bad ? ' is-worse' : ''}`}>
+                    <div className="row" style={{ alignItems: 'baseline', flexWrap: 'nowrap', ...vars({ gap: 12 }) }}>
+                      <span className="g-count g-num" style={{ flex: 'none' }}>
+                        {q.label}
+                      </span>
+                      <span className="g-sql g-sql--full">{q.query}</span>
+                    </div>
+                    <div className="facts-row">
+                      <dl className="facts">
+                        <div>
+                          <dt className="eyebrow">Share of workload</dt>
+                          <dd>{fmtPct(q.share, 0)}</dd>
+                        </div>
+                        <div>
+                          <dt className="eyebrow">Baseline</dt>
+                          <dd>{fmtMs(q.baseMs)}</dd>
+                        </div>
+                        <div>
+                          <dt className="eyebrow">Candidate</dt>
+                          <dd className="strong">{fmtMs(q.candMs)}</dd>
+                        </div>
+                        <div>
+                          <dt className="eyebrow">Rows read</dt>
+                          <dd>{q.baseReadRows != null && q.candReadRows != null ? `${fmtRows(q.baseReadRows)} → ${fmtRows(q.candReadRows)}` : '—'}</dd>
+                        </div>
+                      </dl>
+                      {q.error ? (
+                        <span className="status body-sm g-wrap">
+                          <StatusDot tone="muted" />
+                          Not run: {q.error}
+                        </span>
+                      ) : speed ? (
+                        <span className="status body-sm" style={{ fontWeight: 700 }}>
+                          <StatusDot tone={bad ? 'error' : speed.same ? 'muted' : 'success'} />
+                          {speed.text}
+                        </span>
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
           ) : null}
         </section>
       ) : null}

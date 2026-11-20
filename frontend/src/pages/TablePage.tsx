@@ -3,14 +3,12 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useApi } from '../hooks/useApi';
 import { useSources } from '../state/sources';
-import { Button } from '../components/Button';
 import { Card, StatTile } from '../components/Card';
 import { BytesChart } from '../components/BytesChart';
 import { Chart } from '../components/Chart';
-import { CopyButton } from '../components/CodeBlock';
+import { TableHeader } from '../components/TableHeader';
 import { PageHeader } from '../components/PageHeader';
 import { ErrorState, Loading } from '../components/States';
-import { StatusDot } from '../components/StatusDot';
 import { fmtBytes, fmtInt, fmtPct, fmtRatio, fmtRows } from '../lib/format';
 import { routes } from '../lib/routes';
 import { vars } from '../lib/style';
@@ -40,7 +38,6 @@ export function TablePage() {
   }
   if (!t) return <Loading />;
 
-  const recsTo = routes.recommendations(sourceId, database, table);
   const cols = t.columns;
   const top5 = cols.slice(0, 5);
   const other = cols.slice(5).reduce((a, c) => a + c.compressedBytes, 0);
@@ -50,27 +47,13 @@ export function TablePage() {
 
   return (
     <>
-      <PageHeader
-        eyebrow={
-          <Link to={routes.explorer(sourceId, database)}>
-            {t.sourceName} / {t.database}
-          </Link>
-        }
-        title={t.name}
-        titleAside={<span className="eyebrow nv-badge">{t.engine}</span>}
+      <TableHeader
+        t={t}
+        active="structure"
         description={t.comment.trim() ? t.comment : 'Read from system.tables, system.parts, system.columns and system.data_skipping_indices.'}
-        actions={
-          <>
-            <CopyButton text={t.createQuery}>Copy DDL</CopyButton>
-            <Button variant="secondary" to={routes.usage(sourceId, database, table)}>
-              Usage
-            </Button>
-            <Button to={recsTo}>{t.findings > 0 ? `View ${fmtInt(t.findings)} ${t.findings === 1 ? 'recommendation' : 'recommendations'}` : 'Recommendations'}</Button>
-          </>
-        }
       />
 
-      <section aria-label="Table size" className="grid-auto" style={vars({ min: 200 })}>
+      <section aria-label="Table size" className="grid-auto" style={vars({ min: 170 })}>
         <StatTile label="Rows" value={fmtRows(t.rows)} />
         <StatTile label="Compressed data" value={fmtBytes(t.compressedBytes)} />
         <StatTile label="Uncompressed data" value={fmtBytes(t.uncompressedBytes)} />
@@ -81,9 +64,7 @@ export function TablePage() {
       </section>
 
       {t.files && (t.files.files >= MANY_FILES || t.files.widestColumnFiles >= MANY_FILES_PER_COLUMN) ? (
-        <div className="notice" role="note">
-          <StatusDot tone="warning" />
-          <p className="body-sm">
+        <p className="g-notice" role="note">
             {t.files.widestColumnFiles >= MANY_FILES_PER_COLUMN ? (
               <>
                 Column <strong>{t.files.widestColumn}</strong> alone is about {fmtInt(t.files.widestColumnFiles)} files in every wide part.{' '}
@@ -91,8 +72,7 @@ export function TablePage() {
             ) : null}
             A merge opens the files of every part it reads, and a query opens them once per thread. Keep the server's open-files limit (nofile) well above{' '}
             {fmtInt(t.files.files)}; ClickHouse recommends 262,144. With a lower limit, merges and inserts fail with “Too many open files”.
-          </p>
-        </div>
+        </p>
       ) : null}
 
       <section className="grid-auto" style={vars({ min: 420, gap: 24 })}>
@@ -161,15 +141,15 @@ export function TablePage() {
                     <td className="r">{fmtRatio(c.uncompressedBytes, c.compressedBytes)}</td>
                     <td>
                       <div className="share">
-                        <div className="share-track">
-                          <div className="share-fill" style={{ width: `${Math.min(100, share * 100)}%` }} />
+                        <div className="g-track">
+                          <div className="g-fill" style={{ width: `${Math.min(100, share * 100)}%` }} />
                         </div>
                         <span className="caption g-num">{fmtPct(share)}</span>
                       </div>
                     </td>
                     <td>
                       {c.finding ? (
-                        <Link className="g-link" to={recsTo}>
+                        <Link className="g-link" to={routes.recommendations(sourceId, database, table)}>
                           {c.finding}
                         </Link>
                       ) : (

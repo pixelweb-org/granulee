@@ -2,13 +2,13 @@ import { useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttribu
 
 export function Field({ label, htmlFor, help, helpId, children }: { label: string; htmlFor: string; help?: ReactNode; helpId?: string; children: ReactNode }) {
   return (
-    <div className="bd-field">
-      <label htmlFor={htmlFor} className="bd-field-label">
+    <div className="cc-field">
+      <label htmlFor={htmlFor} className="cc-field__label">
         {label}
       </label>
       {children}
       {help ? (
-        <span id={helpId} className="nv-help">
+        <span id={helpId} className="cc-field__help">
           {help}
         </span>
       ) : null}
@@ -28,7 +28,7 @@ export function TextInput({ label, help, numeric, id, ...rest }: TextInputProps)
   const helpId = help ? `${inputId}-help` : undefined;
   return (
     <Field label={label} htmlFor={inputId} help={help} helpId={helpId}>
-      <input id={inputId} className={`nv-input${numeric ? ' g-num' : ''}`} aria-describedby={helpId} {...rest} />
+      <input id={inputId} className={`cc-field__input${numeric ? ' g-num' : ''}`} aria-describedby={helpId} {...rest} />
     </Field>
   );
 }

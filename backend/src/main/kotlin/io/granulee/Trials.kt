@@ -305,6 +305,7 @@ class TrialService(
                 suggestedCodec = suggestedCodec,
                 typeOptions = (listOf(c.type, suggestedType) + typeAlternatives(c.type)).distinct(),
                 codecOptions = (listOf("", "LZ4", "ZSTD(1)", "ZSTD(3)", "ZSTD(6)") + codecAlternatives(c.type) + listOf(codec, suggestedCodec)).distinct(),
+                compressedBytes = c.compressedBytes,
             )
         }
         val recommended = (facts.rows / 100).coerceIn(10_000_000, 100_000_000).coerceAtMost(facts.rows)
@@ -323,6 +324,7 @@ class TrialService(
             sortingKey = facts.sortingKey,
             columns = columns,
             indexes = facts.indexes.map { it.name },
+            indexDetails = facts.indexes.map { TrialPlanIndex(it.name, it.expression, it.type, it.compressedBytes) },
             recommendations = findings,
             replayableQueries = facts.queries.size,
         )

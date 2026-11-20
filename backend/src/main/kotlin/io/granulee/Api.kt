@@ -211,7 +211,10 @@ data class TrialPlanColumn(
     val suggestedCodec: String,
     val typeOptions: List<String>,
     val codecOptions: List<String>,
+    val compressedBytes: Long = 0,
 )
+
+data class TrialPlanIndex(val name: String, val expression: String, val type: String, val compressedBytes: Long)
 
 data class ColumnChange(val name: String, val type: String?, val codec: String?)
 
@@ -239,6 +242,7 @@ data class TrialPlan(
     val sortingKey: String,
     val columns: List<TrialPlanColumn>,
     val indexes: List<String>,
+    val indexDetails: List<TrialPlanIndex> = emptyList(),
     val recommendations: List<TrialPlanRecommendation>,
     val replayableQueries: Int,
 )

@@ -225,6 +225,7 @@ export interface TrialPlanColumn {
   suggestedCodec: string; // "" = server default (LZ4)
   typeOptions: string[];
   codecOptions: string[]; // "" = server default
+  compressedBytes: number;
 }
 
 export interface TrialPlanRecommendation {
@@ -251,6 +252,7 @@ export interface TrialPlan {
   sortingKey: string; // baseline
   columns: TrialPlanColumn[];
   indexes: string[];
+  indexDetails: { name: string; expression: string; type: string; compressedBytes: number }[];
   recommendations: TrialPlanRecommendation[]; // ticking one applies its fields to the form
   replayableQueries: number; // distinct SELECTs found in query_log (max 20)
 }
