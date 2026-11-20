@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/pixelweb-org/granulee/compare/v0.6.0...v0.7.0) (2026-11-20)
+
+
+### Features
+
+* Estilo look, table tabs, recommendations overview and compact trial setup ([e00e5b4](https://github.com/pixelweb-org/granulee/commit/e00e5b4714492e82c4a27a9f9c4f73f811991ef7))
+
 ## [0.6.0](https://github.com/pixelweb-org/granulee/compare/v0.5.0...v0.6.0) (2026-11-20)
 
 
