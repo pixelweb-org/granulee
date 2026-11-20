@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/pixelweb-org/granulee/compare/v0.5.0...v0.6.0) (2026-11-20)
+
+
+### Features
+
+* count queries on a Buffer table for the table behind it ([66ad59f](https://github.com/pixelweb-org/granulee/commit/66ad59fc0cc27d9b49bc64095e039f347cead624))
+
 ## [0.5.0](https://github.com/pixelweb-org/granulee/compare/v0.4.0...v0.5.0) (2026-11-20)
 
 
