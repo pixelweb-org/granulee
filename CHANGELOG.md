@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.1](https://github.com/pixelweb-org/granulee/compare/v0.8.0...v0.8.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* count a filled-in skip index as part of the candidate ([97b2a8c](https://github.com/pixelweb-org/granulee/commit/97b2a8c61454c3c0747e4a505a419d43a305f94a))
+* stop browsers from keeping an old frontend after a release ([2fcba98](https://github.com/pixelweb-org/granulee/commit/2fcba9817b2c8aa7765bb6eaf960d6eb8ac613a1))
+
 ## [0.8.0](https://github.com/pixelweb-org/granulee/compare/v0.7.0...v0.8.0) (2026-11-20)
 
 
