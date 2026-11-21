@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.5](https://github.com/pixelweb-org/granulee/compare/v0.19.4...v0.19.5) (2026-11-21)
+
+
+### Continuous Integration
+
+* publish the release image to ghcr.io as well ([14a7cba](https://github.com/pixelweb-org/granulee/commit/14a7cba450c83ff534c9abf8b4c44a9849a1c279))
+* publish the release image to ghcr.io as well ([f74cf6b](https://github.com/pixelweb-org/granulee/commit/f74cf6b33b5acb0d5720e3606c6f6bb40b8fccb2))
+
 ## [0.19.4](https://github.com/pixelweb-org/granulee/compare/v0.19.3...v0.19.4) (2026-11-21)
 
 
