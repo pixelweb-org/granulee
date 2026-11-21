@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.0](https://github.com/pixelweb-org/granulee/compare/v0.9.0...v0.10.0) (2026-11-21)
+
+
+### Features
+
+* show indexes and projections with the queries that use them ([efd3a31](https://github.com/pixelweb-org/granulee/commit/efd3a31e6359042492fb699854992b671bb1ff91))
+
+
+### Bug Fixes
+
+* keep a table's projections in the rebuild script ([c15400d](https://github.com/pixelweb-org/granulee/commit/c15400dcd5735b27c7f83a3bdfaa6ce91c501efa))
+
+
+### Build System
+
+* add a Makefile for local development ([666185c](https://github.com/pixelweb-org/granulee/commit/666185c7267783d118502cf79a849dce9bdf078b))
+
 ## [0.9.0](https://github.com/pixelweb-org/granulee/compare/v0.8.1...v0.9.0) (2026-11-20)
 
 
