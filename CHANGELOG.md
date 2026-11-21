@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/pixelweb-org/granulee/compare/v0.12.0...v0.12.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* look up unqualified table names in the database the query ran in ([c7326e5](https://github.com/pixelweb-org/granulee/commit/c7326e564002fa926cdb91f392c7d26fc16fb22d))
+
 ## [0.12.0](https://github.com/pixelweb-org/granulee/compare/v0.11.0...v0.12.0) (2026-11-21)
 
 
