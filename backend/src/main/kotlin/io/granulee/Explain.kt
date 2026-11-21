@@ -4,13 +4,16 @@ import tools.jackson.databind.ObjectMapper
 
 /** One index ClickHouse applied while planning a read, and how far it narrowed it. */
 data class IndexStep(
-    val kind: String, // minmax | partition | primary | skip
+    val kind: String, // minmax | partition | statistics | primary | skip
     val name: String, // the skip index's name, otherwise the key expressions
     val condition: String?,
     val partsBefore: Long,
     val partsAfter: Long,
     val granulesBefore: Long,
     val granulesAfter: Long,
+    // How the primary index was searched: "binary search" when the filter starts at the first key column,
+    // "generic exclusion search" when it does not and every range of the index has to be checked.
+    val searchAlgorithm: String? = null,
 )
 
 /** What EXPLAIN says about one query on one table: the index steps, and how wide it reads. */
@@ -23,6 +26,8 @@ data class QueryExplain(
     val pipeline: String? = null,
     val error: String? = null,
     val projection: String? = null, // the projection the read is answered from; then the steps are its own indexes
+    val readType: String? = null, // Default | InOrder | InReverseOrder: in key order means the query needs no sort
+    val prewhere: String? = null, // the conditions ClickHouse evaluates first, before it reads the other columns
 )
 
 /** Asks ClickHouse how it would run a query, without running it. */
@@ -33,7 +38,8 @@ object Explain {
     private val UNCACHED = mapOf("use_query_cache" to "0", "enable_filesystem_cache" to "0", "use_query_condition_cache" to "0")
 
     // From 25.9 on skip indexes can be applied while reading, which hides them from EXPLAIN indexes = 1.
-    private val PLANNED_INDEXES = mapOf("use_skip_indexes_on_data_read" to "0")
+    // The query condition cache would also let a repeated query show fewer granules than the indexes leave.
+    private val PLANNED_INDEXES = mapOf("use_skip_indexes_on_data_read" to "0", "use_query_condition_cache" to "0")
 
     /** The settings of `wanted` this server knows; an unknown setting would fail the query. */
     private fun known(ch: ChConnection, wanted: Map<String, String>): Map<String, String> = try {
@@ -64,16 +70,12 @@ object Explain {
         projections: Set<String> = emptySet(),
     ): QueryExplain = try {
         val sql = clean(query)
-        val plan = ch.query("EXPLAIN json = 1, indexes = 1 $sql", settings).joinToString("\n") { it.str("explain") }
+        // actions = 1 adds the read type and the PREWHERE filter to the read steps.
+        val plan = ch.query("EXPLAIN json = 1, indexes = 1, actions = 1 $sql", settings).joinToString("\n") { it.str("explain") }
         val reads = readNodes(mapper.readValue(plan, Any::class.java)).filter { table == null || it["Description"] == table || it["Description"] in projections }
         val steps = reads.flatMap { node ->
             (node["Indexes"] as? List<*>).orEmpty().filterIsInstance<Map<*, *>>().map { index ->
-                val kind = when (index["Type"]?.toString()?.replace("-", "")?.lowercase()) {
-                    "minmax" -> "minmax"
-                    "partition" -> "partition"
-                    "primarykey" -> "primary"
-                    else -> "skip"
-                }
+                val kind = stepKind(index["Type"]?.toString())
                 IndexStep(
                     kind = kind,
                     name = index["Name"]?.toString() ?: (index["Keys"] as? List<*>).orEmpty().joinToString(", "),
@@ -82,6 +84,7 @@ object Explain {
                     partsAfter = number(index["Selected Parts"]),
                     granulesBefore = number(index["Initial Granules"]),
                     granulesAfter = number(index["Selected Granules"]),
+                    searchAlgorithm = index["Search Algorithm"]?.toString(),
                 )
             }
         }
@@ -104,10 +107,31 @@ object Explain {
             streams = streams,
             pipeline = text?.take(4000),
             projection = reads.firstNotNullOfOrNull { node -> node["Description"]?.toString()?.takeIf { it in projections } },
+            readType = reads.firstNotNullOfOrNull { it["Read Type"]?.toString() },
+            prewhere = reads.firstNotNullOfOrNull { node ->
+                ((node["Prewhere info"] as? Map<*, *>)?.get("Prewhere filter") as? Map<*, *>)?.get("Prewhere filter column")?.toString()
+            }?.let(::readable)?.take(2000),
         )
     } catch (e: Exception) {
         QueryExplain(error = e.message ?: e.javaClass.simpleName)
     }
+
+    /**
+     * The index types of EXPLAIN, whatever the server version calls them: "MinMax", "Min-Max" and
+     * "Partition Min-Max" are the same step. "Statistics" skips parts by per-part column statistics.
+     */
+    internal fun stepKind(type: String?): String = when (type.orEmpty().filter { it.isLetter() }.lowercase()) {
+        "minmax", "partitionminmax" -> "minmax"
+        "partition" -> "partition"
+        "statistics" -> "statistics"
+        "primarykey" -> "primary"
+        else -> "skip"
+    }
+
+    /** A plan expression without the planner's table prefixes and the type suffixes of its literals. */
+    internal fun readable(expression: String): String = expression
+        .replace(Regex("__table\\d+\\."), "")
+        .replace(Regex("(?<=[\\d'])_[A-Z][A-Za-z0-9]*(\\([^()]*\\))?"), "")
 
     private fun number(value: Any?): Long = (value as? Number)?.toLong() ?: value?.toString()?.toLongOrNull() ?: 0
 

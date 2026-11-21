@@ -187,6 +187,27 @@ class MigrationSqlTest {
     }
 
     @Test
+    fun `index steps keep their kind across server versions`() {
+        assertEquals("minmax", Explain.stepKind("MinMax"))
+        assertEquals("minmax", Explain.stepKind("Min-Max"))
+        assertEquals("minmax", Explain.stepKind("Partition Min-Max"))
+        assertEquals("partition", Explain.stepKind("Partition"))
+        assertEquals("statistics", Explain.stepKind("Statistics"))
+        assertEquals("primary", Explain.stepKind("PrimaryKey"))
+        assertEquals("skip", Explain.stepKind("Skip"))
+    }
+
+    @Test
+    fun `a PREWHERE filter is shown without table prefixes and literal types`() {
+        assertEquals(
+            "and(equals(country, 'DE'), greaterOrEquals(event_time, _CAST(1794980342, 'DateTime')))",
+            Explain.readable("and(equals(__table1.country, 'DE'_String), greaterOrEquals(__table1.event_time, _CAST(1794980342_DateTime, 'DateTime'_String)))"),
+        )
+        assertEquals("equals(user_id, 42)", Explain.readable("equals(__table1.user_id, 42_UInt8)"))
+        assertEquals("less(price, 9.5)", Explain.readable("less(__table2.price, 9.5_Decimal(9, 2))"))
+    }
+
+    @Test
     fun `the reason query_log cannot be read is told apart`() {
         assertEquals("missing", queryLogProblem("Unknown table expression identifier 'system.query_log'. In scope SELECT t").state)
         assertEquals("missing", queryLogProblem("Table system.query_log does not exist").state)

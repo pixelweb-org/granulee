@@ -13,6 +13,19 @@ data class PlannedQuery(
     val plan: QueryExplain,
 )
 
+/** What the primary key or the partition key did for the logged queries that read the table itself. */
+data class KeyUsage(
+    val kind: String, // primary | partition
+    val expression: String,
+    val shapes: Int, // shapes the key narrows
+    val share: Double, // of the table's SELECTs, by run count
+    val binaryShare: Double?, // primary key only: narrowed by binary search
+    val genericShare: Double?, // primary key only: narrowed by generic exclusion search, the slower way
+    val granulesBefore: Long,
+    val granulesAfter: Long,
+    val queries: List<Int>,
+)
+
 /** The query shapes that touch one projection: planned onto it now, or logged as answered from it. */
 data class ProjectionUsage(val name: String, val queries: List<Int>)
 
@@ -37,6 +50,9 @@ data class TableIndexUsage(
     val indexes: List<IndexUsage>,
     val projections: List<ProjectionUsage> = emptyList(),
     val queries: List<PlannedQuery> = emptyList(), // every planned shape, most frequent first
+    val keys: List<KeyUsage> = emptyList(),
+    val proposals: List<TrialIndex> = emptyList(), // skip indexes the scan proposes for this table
+    val whatIf: Boolean = false, // the server can estimate an index that does not exist yet
 )
 
 @RestController
@@ -60,6 +76,7 @@ class IndexController(private val sources: SourceService, private val scans: Sca
         val ch = sources.connection(source)
         val target = Sql.table(db, table)
         val total = facts.queryTotal.coerceAtLeast(1)
+        val proposals = Analyzer.analyze(facts, source.queryLogWindowDays).mapNotNull { it.plan?.addIndex }
         val names = projections(ch, db, table, source.queryLogWindowDays).map { it.name }.toSet()
 
         // The shapes to plan, by normalized text: the table's most frequent ones, then those that read a projection.
@@ -91,6 +108,29 @@ class IndexController(private val sources: SourceService, private val scans: Sca
             val read = logged[name].orEmpty().map { it.normalized }.toSet()
             ProjectionUsage(name, planned.withIndex().filter { (_, pair) -> pair.second.projection == name || pair.first.normalized in read }.map { it.index })
         }
+        // The keys only count for reads of the table itself: a projection has a primary key of its own.
+        val own = planned.withIndex().filter { it.value.second.projection == null }
+        fun narrowing(plan: QueryExplain, kinds: Set<String>) = plan.steps.filter { it.kind in kinds && it.condition != null && it.condition != "true" }
+        fun keyUsage(kind: String, expression: String, kinds: Set<String>): KeyUsage? {
+            if (expression.isBlank()) return null
+            val used = own.mapNotNull { (at, pair) -> narrowing(pair.second, kinds).takeIf { it.isNotEmpty() }?.let { Triple(at, pair.first, it) } }
+            fun shareOf(algorithm: String) = used.filter { (_, _, steps) -> steps.any { it.searchAlgorithm.orEmpty().startsWith(algorithm) } }
+                .sumOf { it.second.count }.toDouble() / total
+            return KeyUsage(
+                kind, expression,
+                shapes = used.size,
+                share = used.sumOf { it.second.count }.toDouble() / total,
+                binaryShare = if (kind == "primary") shareOf("binary") else null,
+                genericShare = if (kind == "primary") shareOf("generic") else null,
+                granulesBefore = used.sumOf { it.third.first().granulesBefore },
+                granulesAfter = used.sumOf { it.third.last().granulesAfter },
+                queries = used.map { it.first },
+            )
+        }
+        val keys = listOfNotNull(
+            keyUsage("primary", facts.primaryKey.ifBlank { facts.sortingKey }, setOf("primary")),
+            keyUsage("partition", facts.partitionKey, setOf("minmax", "partition")),
+        )
         return TableIndexUsage(
             checkedShapes = planned.size,
             failedShapes = planned.count { it.second.error != null },
@@ -99,6 +139,9 @@ class IndexController(private val sources: SourceService, private val scans: Sca
             indexes = indexes,
             projections = projectionUse,
             queries = planned.map { (q, plan) -> PlannedQuery(q.query, q.count, q.count.toDouble() / total, plan) },
+            keys = keys,
+            proposals = proposals,
+            whatIf = WhatIfController.supported(ch),
         )
     }
 

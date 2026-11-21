@@ -18,7 +18,15 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
 - **Projections** are listed on the same tab with their query, rows, size on disk, the parts they are
   built in and how many logged SELECTs ClickHouse answered from them.
 - Opening an index or a projection there lists the query shapes that use it, each with its plan: the
-  index steps in order and the parts and granules every step left.
+  index steps in order and the parts and granules every step left, how the primary index was searched,
+  whether the read runs in sorting-key order and what ClickHouse moved to `PREWHERE`.
+- **Keys** on the same tab show how many logged SELECTs the primary key and the partition key narrow.
+  For the primary key it tells binary search from generic exclusion search: the second means a filter
+  that does not start at the first sorting-key column.
+- **Candidate skip indexes** are estimated before anything is built, on servers that have
+  `EXPLAIN WHATIF`: each candidate becomes a hypothetical index in a session, and ClickHouse says how many
+  granules of every logged query it would skip. The scan's own proposals are listed to start with. This
+  reads table data (ClickHouse builds the candidate in memory) and only runs when you ask for it.
 - **Trials** build a baseline and a candidate table in a scratch database, copy the same sample of
   rows into both, merge them, and compare sizes, column scans, insert throughput and replayed queries.
   Each replayed query is also planned with `EXPLAIN` on both tables, so the result shows which indexes

@@ -6,7 +6,9 @@ import { useApi } from '../hooks/useApi';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { PageHeader } from '../components/PageHeader';
-import { PlanSteps } from '../components/PlanSteps';
+import { CandidateIndexes } from '../components/CandidateIndexes';
+import { PlanSteps, ReadFacts } from '../components/PlanSteps';
+import { RowButton } from '../components/RowButton';
 import { ErrorState, Loading } from '../components/States';
 import { TableHeader } from '../components/TableHeader';
 import { useSources } from '../state/sources';
@@ -20,7 +22,10 @@ const SHOWN = 3;
 const dash = (v: string | null | undefined) => (v && v.trim() ? v : '—');
 
 /** What the opened row is: a skip index or a projection, by name. */
-type Open = { kind: 'index' | 'projection'; name: string } | null;
+type Kind = 'key' | 'index' | 'candidate' | 'projection';
+
+const KEY_LABEL = { primary: 'Primary key', partition: 'Partition key' } as const;
+type Open = { kind: Kind; name: string } | null;
 
 export function IndexesPage() {
   const { sourceId = '', database = '', table = '' } = useParams();
@@ -49,9 +54,9 @@ export function IndexesPage() {
   const projections = t.projections;
   const projectionBytes = projections.reduce((a, p) => a + p.bytesOnDisk, 0);
   const logDays = sources.find((s) => s.id === sourceId)?.queryLogWindowDays;
-  const isOpen = (kind: 'index' | 'projection', name: string) => open?.kind === kind && open.name === name;
-  const toggle = (kind: 'index' | 'projection', name: string) => setOpen(isOpen(kind, name) ? null : { kind, name });
-  const panel = (kind: 'index' | 'projection', name: string, ids: number[] | undefined, empty: ReactNode) => (
+  const isOpen = (kind: Kind, name: string) => open?.kind === kind && open.name === name;
+  const toggle = (kind: Kind, name: string) => setOpen(isOpen(kind, name) ? null : { kind, name });
+  const panel = (kind: 'key' | 'index' | 'projection', name: string, ids: number[] | undefined, empty: ReactNode) => (
     <Queries usage={usage} loading={check.loading} error={check.error} ids={ids ?? []} highlight={kind === 'index' ? name : undefined} projection={kind === 'projection' ? name : undefined} empty={empty} />
   );
 
@@ -78,6 +83,80 @@ export function IndexesPage() {
             {check.loading ? 'Planning…' : 'Check again'}
           </Button>
         </div>
+      ) : null}
+
+      {measured?.keys.length ? (
+        <section className="stack">
+          <h2 className="card-title">Keys</h2>
+          <Card table>
+            <table className="g-tbl g-acc">
+              <thead>
+                <tr>
+                  <th>Key</th>
+                  <th>Expression</th>
+                  <th className="r">Used by</th>
+                  <th>Search</th>
+                  <th style={{ width: '18%' }}>Granules dropped</th>
+                </tr>
+              </thead>
+              <tbody>
+                {measured.keys.map((k) => {
+                  const dropped = k.granulesBefore > 0 ? 1 - k.granulesAfter / k.granulesBefore : 0;
+                  const shown = isOpen('key', k.kind);
+                  const id = `key-${k.kind}`;
+                  return (
+                    <Fragment key={k.kind}>
+                      <tr className={`g-acc__row${shown ? ' is-open' : ''}`} onClick={() => toggle('key', k.kind)}>
+                        <td>
+                          <RowButton open={shown} controls={id}>
+                            {KEY_LABEL[k.kind]}
+                          </RowButton>
+                        </td>
+                        <td className="g-mono g-wrap">{k.expression}</td>
+                        <td className="r nowrap">{k.shapes > 0 ? `${fmtPct(k.share, 0)} of SELECTs` : 'no logged query'}</td>
+                        <td className="nowrap">
+                          {k.kind === 'primary' && k.shapes > 0
+                            ? [
+                                k.binaryShare ? `${fmtPct(k.binaryShare, 0)} binary` : null,
+                                k.genericShare ? `${fmtPct(k.genericShare, 0)} generic exclusion` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(' · ') || '—'
+                            : '—'}
+                        </td>
+                        <td>
+                          {k.shapes > 0 ? (
+                            <div className="share">
+                              <div className="g-track">
+                                <div className="g-fill" style={{ width: `${Math.min(100, dropped * 100)}%` }} />
+                              </div>
+                              <span className="g-num ink" style={{ width: 36, textAlign: 'right' }}>
+                                {fmtPct(dropped, 0)}
+                              </span>
+                            </div>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                      </tr>
+                      {shown ? (
+                        <tr className="g-acc__panel">
+                          <td colSpan={5} id={id}>
+                            {panel('key', k.kind, k.queries, <>None of the {fmtInt(measured.checkedShapes)} planned query shapes filters on this key.</>)}
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Card>
+          <p className="caption muted">
+            “Binary” means the filter starts at the first sorting-key column and ClickHouse jumps straight to the matching ranges. “Generic exclusion” means
+            it does not, so every range of the primary index is checked and far fewer granules drop out: a sign the sorting key does not fit those queries.
+          </p>
+        </section>
       ) : null}
 
       <section className="stack">
@@ -163,6 +242,25 @@ export function IndexesPage() {
           </p>
         ) : null}
       </section>
+
+      {measured?.whatIf ? (
+        <CandidateIndexes
+          sourceId={sourceId}
+          database={database}
+          table={table}
+          proposals={measured.proposals}
+          taken={t.indexes.map((i) => i.name)}
+          isOpen={(name) => isOpen('candidate', name)}
+          onToggle={(name) => toggle('candidate', name)}
+        />
+      ) : measured ? (
+        <section className="stack">
+          <h2 className="card-title">Candidate skip indexes</h2>
+          <p className="body-sm muted">
+            This server has no EXPLAIN WHATIF, so an index that does not exist yet cannot be estimated here. A trial builds it on a sample and measures it.
+          </p>
+        </section>
+      ) : null}
 
       <section className="stack">
         <div className="between">
@@ -261,17 +359,6 @@ export function IndexesPage() {
   );
 }
 
-function RowButton({ open, controls, children }: { open: boolean; controls: string; children: ReactNode }) {
-  return (
-    <button type="button" className="g-acc__btn" aria-expanded={open} aria-controls={open ? controls : undefined}>
-      <svg className="g-acc__chev" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-        <path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-      {children}
-    </button>
-  );
-}
-
 /** The query shapes behind one index or projection, each with its plan. */
 function Queries({
   usage,
@@ -352,6 +439,7 @@ function QueryPlan({ q, highlight, projection }: { q: PlannedQuery; highlight?: 
       ) : (
         <p className="body-sm muted">No index narrows this query: it reads every granule.</p>
       )}
+      {plan.error ? null : <ReadFacts plan={plan} />}
       {long ? (
         <button type="button" className="cc-btn cc-btn--link" style={{ alignSelf: 'flex-start' }} aria-expanded={full} onClick={() => setFull(!full)}>
           {full ? 'Show less' : 'Show full query'}

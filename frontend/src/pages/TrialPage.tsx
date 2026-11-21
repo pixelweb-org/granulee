@@ -9,7 +9,7 @@ import { BytesChart } from '../components/BytesChart';
 import { Chart } from '../components/Chart';
 import { CodeBlock } from '../components/CodeBlock';
 import { PageHeader } from '../components/PageHeader';
-import { PlanSteps } from '../components/PlanSteps';
+import { PlanSteps, ReadFacts } from '../components/PlanSteps';
 import { ErrorState, Loading } from '../components/States';
 import { Status, StatusDot, type Tone } from '../components/StatusDot';
 import { ApplyTrialDialog, OptimizeTrialDialog, RemoveTrialDialog, TrialProgressCard, trialTone, useRemoveTrial } from '../components/TrialParts';
@@ -130,6 +130,7 @@ function PlanSide({ title, plan }: { title: string; plan: QueryExplain | null })
       ) : (
         <p className="body-sm muted">No index narrows this query: it reads every granule.</p>
       )}
+      {plan.error ? null : <ReadFacts plan={plan} />}
       {plan.pipeline ? (
         <details>
           <summary className="body-sm g-act" style={{ cursor: 'pointer' }}>

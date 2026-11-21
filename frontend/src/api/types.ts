@@ -350,13 +350,15 @@ export interface TrialQueryResult {
 }
 
 export interface IndexStep {
-  kind: 'minmax' | 'partition' | 'primary' | 'skip';
+  kind: 'minmax' | 'partition' | 'statistics' | 'primary' | 'skip';
   name: string; // the skip index's name, otherwise the key expressions
   condition: string | null;
   partsBefore: number;
   partsAfter: number;
   granulesBefore: number;
   granulesAfter: number;
+  /** Primary key only: "binary search", or "generic exclusion search" when the filter skips the first key column. */
+  searchAlgorithm: string | null;
 }
 
 export interface QueryExplain {
@@ -368,6 +370,21 @@ export interface QueryExplain {
   pipeline: string | null; // EXPLAIN PIPELINE text
   error: string | null;
   projection: string | null; // the projection the read is answered from; then the steps are its own indexes
+  readType: string | null; // Default | InOrder | InReverseOrder
+  prewhere: string | null; // the conditions ClickHouse evaluates first
+}
+
+/** What the primary key or the partition key did for the logged queries that read the table itself. */
+export interface KeyUsage {
+  kind: 'primary' | 'partition';
+  expression: string;
+  shapes: number;
+  share: number; // 0..1 of the table's SELECTs
+  binaryShare: number | null; // primary key: narrowed by binary search
+  genericShare: number | null; // primary key: narrowed by generic exclusion search
+  granulesBefore: number;
+  granulesAfter: number;
+  queries: number[];
 }
 
 /** One logged query shape and how ClickHouse plans it on the production table now. */
@@ -398,6 +415,49 @@ export interface TableIndexUsage {
   /** Per projection, the shapes planned onto it now or logged as answered from it. */
   projections: { name: string; queries: number[] }[];
   queries: PlannedQuery[]; // every planned shape, most frequent first
+  keys: KeyUsage[];
+  proposals: TrialIndex[]; // skip indexes the scan proposes for this table
+  whatIf: boolean; // the server can estimate an index that does not exist yet
+}
+
+/** One logged query shape and what it reads today, from EXPLAIN WHATIF. */
+export interface WhatIfShape {
+  query: string;
+  count: number;
+  share: number; // 0..1 of the table's SELECTs
+  parts: number | null;
+  granules: number | null; // after the keys and the existing skip indexes
+  error: string | null;
+}
+
+/** One candidate index in one query shape. */
+export interface WhatIfUse {
+  shape: number; // position in TableWhatIf.shapes
+  applicable: boolean;
+  reason: string | null;
+  granulesBefore: number | null;
+  granulesAfter: number | null;
+  source: string | null; // empirical | statistical | applicability_only
+  sampled: boolean;
+}
+
+export interface WhatIfCandidate extends TrialIndex {
+  error: string | null; // the server refused the definition
+  shapes: number; // shapes it would narrow
+  share: number;
+  granulesBefore: number;
+  granulesAfter: number;
+  uses: WhatIfUse[];
+}
+
+/** Skip indexes that do not exist yet, estimated with EXPLAIN WHATIF against the logged queries. */
+export interface TableWhatIf {
+  message: string | null; // set when nothing could be estimated
+  checkedShapes: number;
+  failedShapes: number;
+  selects: number;
+  shapes: WhatIfShape[];
+  candidates: WhatIfCandidate[];
 }
 
 export interface TrialResult {

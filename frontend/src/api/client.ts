@@ -10,6 +10,8 @@ import type {
   TableRecommendations,
   ApplyPlan,
   TableIndexUsage,
+  TableWhatIf,
+  TrialIndex,
   TableUsage,
   Trial,
   TrialList,
@@ -81,6 +83,8 @@ export const api = {
     request<TableUsage>('GET', `/sources/${e(source)}/databases/${e(database)}/tables/${e(table)}/usage`),
   indexUsage: (source: string, database: string, table: string) =>
     request<TableIndexUsage>('GET', `/sources/${e(source)}/databases/${e(database)}/tables/${e(table)}/index-usage`),
+  indexWhatIf: (source: string, database: string, table: string, candidates: TrialIndex[]) =>
+    request<TableWhatIf>('POST', `/sources/${e(source)}/databases/${e(database)}/tables/${e(table)}/index-whatif`, { candidates }),
   trials: (source?: string | null) => request<TrialList>('GET', `/trials${qs({ source })}`),
   trialPlan: (source: string, database: string, table: string) =>
     request<TrialPlan>('GET', `/trials/plan${qs({ source, database, table })}`),
