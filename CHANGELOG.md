@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/pixelweb-org/granulee/compare/v0.17.0...v0.18.0) (2026-11-21)
+
+
+### Features
+
+* optionally build the table with plain defaults in a trial ([17b951e](https://github.com/pixelweb-org/granulee/commit/17b951eae098373afb24b22311776f0b71b42e1b))
+
 ## [0.17.0](https://github.com/pixelweb-org/granulee/compare/v0.16.0...v0.17.0) (2026-11-21)
 
 
