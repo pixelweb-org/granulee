@@ -6,7 +6,7 @@ const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\s*\n\s*/g, '
 const table = (head: string[], rows: string[][]) =>
   [`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`, ...rows.map((row) => `| ${row.map(cell).join(' | ')} |`)].join('\n');
 
-/** The whole result of a trial as one Markdown file, to keep or to pass on. */
+/** The whole result of a trial as one Markdown file, to keep or to pass on. `guide` is the candidate against today's table. */
 export function trialReport(trial: Trial, r: TrialResult, guide: Guide): string {
   const plain = r.metrics.some((m) => m.plain != null);
   const out: string[] = [
@@ -14,7 +14,7 @@ export function trialReport(trial: Trial, r: TrialResult, guide: Guide): string 
     `Trial #${trial.id} of ${trial.database}.${trial.table} on ${trial.sourceName}${trial.finishedAt ? `, finished ${new Date(trial.finishedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : ''}. ` +
       `${fmtRows(r.rows)} of ${fmtRows(r.totalRows)} rows, identical in every trial table.`,
     '## Verdict',
-    r.verdict,
+    guide.verdict,
   ];
   const items = (title: string, list: { title: string; detail: string }[]) => {
     if (list.length) out.push(`### ${title}`, list.map((i) => `- ${i.title}: ${i.detail}`).join('\n'));

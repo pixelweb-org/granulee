@@ -529,7 +529,7 @@ export interface TrialResult {
   alterDdl: string; // ALTER TABLE (or rebuild) statements for the production table; '' when nothing changes
   projectedBaseBytes: number;
   projectedCandBytes: number;
-  verdict: string;
+  verdict: string; // the server's own summary; the page words its verdict from the noise-aware figures instead
 }
 
 export interface Trial {

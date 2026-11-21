@@ -113,7 +113,7 @@ export function TrialPage() {
           trial.status === 'running' ? undefined : (
             <>
               {guide && r ? (
-                <Button variant="secondary" onClick={() => download(`trial-${trial.id}.md`, trialReport(trial, r, guide), 'text/markdown')}>
+                <Button variant="secondary" onClick={() => download(`trial-${trial.id}.md`, trialReport(trial, r, buildGuide(trial, r, 'today')), 'text/markdown')}>
                   Export report
                 </Button>
               ) : null}

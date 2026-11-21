@@ -262,10 +262,44 @@ function count(n: number, word: string) {
   return `${fmtInt(n)} ${word}`;
 }
 
-/** The verdict against plain defaults: how much of the distance today's tuning already covers. */
-function defaultsVerdict(r: TrialResult): string {
+/**
+ * The verdict in one or two sentences: the size, then how many queries got clearly faster or slower. It goes by the
+ * same rule as every figure on the page, so a median that moved inside the noise is not called faster.
+ */
+function todayVerdict(r: TrialResult, faster: TrialQueryResult[], slower: TrialQueryResult[]): string {
   const size = r.metrics.find((m) => m.key === 'size');
-  if (!size || size.plain == null || !(size.plain > 0)) return r.verdict;
+  const change = size && size.baseline > 0 ? (size.candidate - size.baseline) / size.baseline : null;
+  const first =
+    change == null
+      ? ''
+      : Math.abs(change) < 0.005
+        ? "The candidate is the same size as today's table."
+        : `The candidate is ${fmtPct(Math.abs(change))} ${change < 0 ? 'smaller' : 'larger'}.`;
+  const n = r.queries.length;
+  if (!n) return first || r.verdict;
+  const some = (k: number) => (k === 1 ? 'one' : fmtInt(k));
+  const named = (list: TrialQueryResult[]) => (list.length <= 3 ? ` (${[...list].sort((a, b) => b.share - a.share).map((q) => q.label).join(', ')})` : '');
+  let second: string;
+  if (!faster.length && !slower.length) {
+    second = n === 1 ? 'The replayed query shows no reliable difference.' : `None of the ${fmtInt(n)} replayed queries shows a reliable difference.`;
+  } else {
+    const parts = [
+      faster.length ? `${some(faster.length)} ${faster.length === 1 ? 'query gets' : 'queries get'} clearly faster` : null,
+      // After the faster ones the subject is already there: "…, one clearly slower".
+      slower.length ? (faster.length ? `${some(slower.length)} clearly slower` : `${some(slower.length)} ${slower.length === 1 ? 'query gets' : 'queries get'} clearly slower`) + named(slower) : null,
+    ].filter(Boolean) as string[];
+    const rest = n - faster.length - slower.length;
+    const tail = rest > 0 ? `; the other ${rest === 1 ? 'one shows' : `${fmtInt(rest)} show`} no reliable difference` : '';
+    const text = parts.join(', ') + tail + '.';
+    second = text.charAt(0).toUpperCase() + text.slice(1);
+  }
+  return [first, second].filter(Boolean).join(' ');
+}
+
+/** The verdict against plain defaults: how much of the distance today's tuning already covers. */
+function defaultsVerdict(r: TrialResult, fallback: string): string {
+  const size = r.metrics.find((m) => m.key === 'size');
+  if (!size || size.plain == null || !(size.plain > 0)) return fallback;
   const cand = 1 - size.candidate / size.plain;
   const today = 1 - size.baseline / size.plain;
   const first = `Against plain defaults the candidate is ${fmtPct(Math.abs(cand))} ${cand >= 0 ? 'smaller' : 'larger'}.`;
@@ -381,7 +415,7 @@ export function buildGuide(trial: Trial, r: TrialResult, compare: Compare): Guid
   return {
     cmp,
     noise,
-    verdict: cmp === 'defaults' ? defaultsVerdict(r) : r.verdict,
+    verdict: cmp === 'defaults' ? defaultsVerdict(r, todayVerdict(r, faster, slower)) : todayVerdict(r, faster, slower),
     kpis: {
       size: sizePct,
       queries: queriesWord,
