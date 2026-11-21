@@ -1,182 +1,100 @@
 # Granulee
 
-Finds storage and schema improvements on ClickHouse servers and measures them before you apply them.
+Granulee finds storage and schema improvements on ClickHouse servers and measures them on a sample of
+your data before you apply them.
 
-- **Scans** read system tables only (`system.tables`, `system.parts`, `system.columns`,
-  `system.parts_columns`, `system.data_skipping_indices`, `system.projections`, `system.projection_parts`,
-  `system.query_log`). Table data is not read.
-- **Recommendations** cover partitioning, sorting keys (from what `query_log` shows queries filter on),
-  codecs, data types and skip indexes. Savings are estimates.
-- **What a query filters on** comes from ClickHouse itself: the scan runs `EXPLAIN QUERY TREE` for the most
-  frequent logged SELECTs, which resolves aliases, subqueries, CTEs and joins to the table's own columns.
-  The query is analysed, not run, and a read limit keeps a scalar subquery from reading rows. Where the
-  server cannot analyse a query (no `SELECT` on the table, a query on a view), Granulee reads the columns
-  off the query text after `WHERE` instead.
-- **Without a query log** the scan still covers sizes, codecs, types, partitioning and file counts.
-  Granulee says per source why the log is unavailable (switched off, no read access, empty) and shows
-  the steps to switch it on.
-- **Usage** shows how a table was queried, from `system.query_log`: SELECT and INSERT volume, which
-  columns are read and filtered on, the most frequent query shapes and who runs them.
-- **Skip indexes** are measured, not guessed: the table's "Indexes & projections" tab plans the logged
-  queries with `EXPLAIN indexes = 1` and shows what each existing index drops. Columns that many queries
-  filter on outside the sorting key become proposals for a new index, which a trial then tests.
-- **Projections** are listed on the same tab with their query, rows, size on disk, the parts they are
-  built in and how many logged SELECTs ClickHouse answered from them.
-- Opening an index or a projection there lists the query shapes that use it, each with its plan: the
-  index steps in order and the parts and granules every step left, how the primary index was searched,
-  whether the read runs in sorting-key order and what ClickHouse moved to `PREWHERE`.
-- **Keys** on the same tab show how many logged SELECTs the primary key and the partition key narrow.
-  For the primary key it tells binary search from generic exclusion search: the second means a filter
-  that does not start at the first sorting-key column.
-- **Candidate skip indexes** are estimated before anything is built, on servers that have
-  `EXPLAIN WHATIF`: each candidate becomes a hypothetical index in a session, and ClickHouse says how many
-  granules of every logged query it would skip. The scan's own proposals are listed to start with. This
-  reads table data (ClickHouse builds the candidate in memory) and only runs when you ask for it.
-- **Codecs** are chosen by measuring, not by rule: a trial can build one more scratch table that holds the
-  largest columns once per codec worth trying, in the candidate's row order, and weigh each variant. The
-  report names the codec to use per column (the cheapest to read back within 3% of the smallest; the one in
-  place stays when it is among them) and shows every variant. Tick the ones you want and "Set up a trial
-  with these picks" opens a follow-up trial: that trial's candidate with the picked codecs on top.
-- **Trials** build a baseline and a candidate table in a scratch database, copy the same sample of
-  rows into both, merge them, and compare sizes, column scans, insert throughput and replayed queries.
-  A replayed query runs several times on each table, the tables taking turns. The result shows the median,
-  the fastest and slowest run and the CPU time from `query_log`. Where the runs of the two tables overlap,
-  it says "no clear difference" instead of naming a factor.
-  On request a trial also builds the table with plain defaults (no skip indexes, no projections, the
-  server's default codec on every column, today's keys and types) and measures it the same way, which
-  shows how much the tuning the table already has buys.
-  Each replayed query is also planned with `EXPLAIN` on both tables, so the result shows which indexes
-  narrowed it, the granules read and the read streams. On servers that have `EXPLAIN ANALYZE` it is run
-  once more with it: the result then shows planning and execution time, peak memory, and for every step
-  the rows in and out, its share of the time and the threads at work.
-  A finished trial is read in six steps under one verdict that stays in view: an overview that sorts
-  every measure into better, worse and no clear difference, what changed, size per column, codecs, speed
-  per query, and applying. A timing only counts as better or worse outside the server's run-to-run noise,
-  measured from the replayed queries (at least ±10%). Where the trial built the plain-defaults table, the
-  verdict can be switched to compare the candidate with that instead of today's table. "Export report"
-  saves the whole result as a Markdown file.
-  The last step shows the statements that apply the candidate to the production table, computed against
-  the table as it is now: `ALTER TABLE` for column, codec and index changes, a rebuild script when a key
-  changes. It runs the `ALTER`s after you confirm (the source's user needs `ALTER` on the table).
-  A rebuild is only shown, never run. Once applied, the trial page offers `OPTIMIZE … FINAL` for the table,
-  so existing parts are rewritten with the new codecs, and shows whether it is still running.
+It reads a server's system tables and query log, proposes changes to codecs, data types, sorting and
+partition keys and skip indexes, and then runs a **trial**: a baseline table and a candidate table in a
+scratch database, filled with the same rows, merged, measured and queried side by side with the queries
+your server actually ran. You see what a change does to size, inserts and every replayed query before a
+single statement touches the production table.
 
-## Layout
+![A finished trial: one verdict, then what got better, worse and what cannot be told apart](docs/images/trial-overview.jpg)
 
-| Path | What |
+## What it does
+
+- **Scans** a server from its system tables: sizes, compression, parts, codecs, types, keys, skip
+  indexes and projections. Table data is not read.
+- **Recommends** changes to partitioning, sorting keys, codecs, data types and skip indexes. Sorting-key
+  and index findings come from what the logged queries filter on, which ClickHouse itself resolves with
+  `EXPLAIN QUERY TREE`.
+- **Shows how a table is used**: SELECT and INSERT volume, the columns read and filtered on, the most
+  frequent query shapes.
+- **Measures indexes instead of guessing**: every logged query is planned with `EXPLAIN indexes = 1`, so
+  you see what each skip index, projection and key actually drops. On servers with `EXPLAIN WHATIF`,
+  candidate indexes are estimated before anything is built.
+- **Runs trials** on a sample: size per column, column scans, insert throughput, replayed queries with
+  their plans, and on request every sensible codec per column. A timing only counts as better or worse
+  outside the server's own run-to-run noise.
+- **Applies** a candidate when you confirm it: `ALTER TABLE` statements are shown and run from the page,
+  a rebuild script for key changes is only shown.
+
+[What Granulee does, in detail](docs/features.md) covers each of these.
+
+| | |
 | --- | --- |
-| `backend/` | Kotlin, Spring Boot 4, ClickHouse Java client v2 (HTTP). Serves `/api/**`. |
-| `frontend/` | React 19, Vite, TypeScript. Estilo (Compra Contínua) look, light only. |
-| `frontend/src/api/types.ts` | The API contract. The backend's data classes mirror it field for field, each in the package of its feature. |
-| `dev/seed.sh` | Fills a local ClickHouse with sample data that has findings. |
+| ![Speed step of a trial: every replayed query on one scale](docs/images/trial-speed.jpg) | ![Indexes and projections of a table with the queries that use them](docs/images/table-indexes.jpg) |
 
-Granulee keeps its own state as JSON files in `backend/data/` (override with `GRANULEE_DATA_DIR`):
-sources, the last scan per source, size history, dismissed recommendations and trials. ClickHouse
-passwords are stored AES-GCM encrypted; the key is `GRANULEE_SECRET_KEY` (base64, 32 bytes) or, if
-unset, a key file created in the data directory.
+## Quick start
 
-### Backend packages
-
-The backend is one package per feature under `backend/src/main/kotlin/io/granulee/`. A package only uses
-the ones above it in this table, so there are no cycles.
-
-| Package | What |
-| --- | --- |
-| `sql` | ClickHouse SQL as text, without a server: quoting, column types, key expressions, `engine_full`, rewriting logged queries, skip index definitions. |
-| `clickhouse` | The connection: `ChConnection` (query, exec) and its HTTP implementation, one client per endpoint. |
-| `state` | `JsonStore`, the JSON files in the data directory. |
-| `facts` | What a scan knows about a table (`TableFacts` and its parts). These classes are the format of `snapshots/*.json`. |
-| `explain` | `EXPLAIN indexes = 1`, `EXPLAIN ANALYZE` and `EXPLAIN QUERY TREE`: asking the server and reading what it prints. |
-| `recommendation` | The rules (`Analyzer`) that turn table facts into recommendations, and the ones a person dismissed. |
-| `scan` | Reads a server's system tables and query log into a snapshot (`Scanner`); keeps the snapshots and the size history. |
-| `source` | The registered servers: credentials, health, when they are scanned, `/api/sources`. |
-| `trial` | Trials from plan to result: the run (`TrialRun`, `QueryReplay`, `CodecBakeoff`), the DDL and migration SQL, the report, applying a candidate, `/api/trials`. |
-| `usage` | How a table was queried, from `system.query_log`. |
-| `index` | What skip indexes, projections and keys do for the logged queries, and `EXPLAIN WHATIF` estimates. |
-| `explorer` | Overview, databases, the table page and its recommendations. |
-| `web` | Error answers, `/api/health`, serving the frontend. |
-
-`io.granulee` itself only holds the application class, the two errors a request can end in and the number
-formatting of the texts.
-
-Within a package the controller only maps HTTP to a service. What decides something (the rules, the
-migration and DDL text, a trial's result and verdict, the index and usage summaries, the parsers) is in
-plain functions and classes that need no Spring, no server and no files, and is tested that way. Everything
-that talks to ClickHouse takes a `ChConnection`; the tests hand it a stand-in (`FakeClickHouse`) and check
-the statements it is sent. `StoredFilesTest` loads data files as a release wrote them and checks they are
-written back byte for byte: the file format is part of the contract, like the API.
-
-## Run
-
-Needs JDK 21 and Node 22 or newer.
+You need Docker. This builds Granulee from source and starts it on http://localhost:8080:
 
 ```bash
-make dev
+git clone https://github.com/pixelweb-org/granulee.git
+cd granulee
+docker build -t granulee .
+docker run -d --name granulee -p 8080:8080 -v granulee-data:/data granulee
 ```
 
-That starts the backend on http://localhost:8080 and the frontend dev server on
-http://localhost:5173, which proxies `/api` to the backend. Ctrl+C stops both. Open
-http://localhost:5173 and add a server under **Data sources**.
+Open http://localhost:8080, go to **Data sources** and add your ClickHouse server (HTTP or HTTPS
+endpoint, user, password). The first scan starts right away.
 
-`make` lists the other targets: `make backend` and `make frontend` start one of the two,
-`make test` runs the tests, `make build` makes one jar with the frontend inside and `make image`
-the container image.
+Granulee has **no login of its own**. Run it where only you can reach it; see
+[Running Granulee](docs/running.md#security).
 
-## A local ClickHouse to try it on
+### Try it on sample data first
+
+With a JDK (17 or newer) and Node 22 or newer you can run everything locally, including a ClickHouse
+container with a sample schema that has findings:
 
 ```bash
-make clickhouse seed
+make clickhouse seed   # ClickHouse 25.8 on port 18123 with sample data and a query-log workload
+make dev               # backend on :8080, frontend dev server on :5173
+make source            # registers that ClickHouse in the running Granulee and scans it
 ```
 
-This starts a ClickHouse 25.8 container on port 18123 and fills it with a sample schema that has
-findings, including a query-log workload. With Granulee running, register it as a source:
+Then open http://localhost:5173.
 
-```bash
-make source
-```
+## The ClickHouse user
 
-Or add it by hand: HTTP, `localhost`, port `18123`, user and password `granulee_test`, trials
-allowed. `make stop` stops the container; `make clean` removes it together with Granulee's local
-state in `backend/data`.
-
-## ClickHouse user
+For scans and recommendations a user that can read the system tables is enough:
 
 ```sql
-CREATE USER granulee_ro IDENTIFIED WITH sha256_password BY '…';
-GRANT SELECT ON system.* TO granulee_ro;
-
--- For trials (they copy a sample of the table into the scratch database), for the index checks and so
--- that the scan can ask ClickHouse what the logged queries filter on:
-GRANT SELECT ON analytics.* TO granulee_ro;
-GRANT CREATE TABLE, DROP TABLE, INSERT, SELECT, OPTIMIZE ON scratch.* TO granulee_ro;
+CREATE USER granulee IDENTIFIED WITH sha256_password BY '…';
+GRANT SELECT ON system.* TO granulee;
 ```
 
-## Limits
+Query analysis, the index checks and trials need more: `SELECT` on the tables themselves and a scratch
+database to build trial tables in. [ClickHouse access](docs/clickhouse-access.md) lists the grants per
+feature and what each one is used for.
 
+## Documentation
+
+- [Running Granulee](docs/running.md): Docker, Compose, the jar, configuration, data directory, security.
+- [ClickHouse access](docs/clickhouse-access.md): grants per feature, the query log, what is read and written.
+- [What Granulee does, in detail](docs/features.md): scans, recommendations, indexes, codecs.
+- [Trials](docs/trials.md): how a trial runs, how to read its result, applying a candidate.
+- [Development](docs/development.md): layout, build, tests, releases.
+
+## Compatibility and limits
+
+- Developed and tested against ClickHouse 25.8 and 26.9. Projections are listed from 24.9 on;
+  `EXPLAIN ANALYZE` and `EXPLAIN WHATIF` are used where the server has them and left out where not.
 - Only MergeTree-family tables are scanned. Only HTTP and HTTPS endpoints are supported.
-- Distinct-value estimates (used for the LowCardinality rule) exist only on servers that report
-  `estimates.cardinality` in `system.parts_columns`.
-- Skip-index usage is not in system tables, so index findings are "review" items by size.
-- Trial tables have the production table's engine without replication (a `ReplicatedReplacingMergeTree`
-  becomes a `ReplacingMergeTree` with the same arguments), wide parts, and carry no projections. So logged
-  queries with `FINAL` replay, and a merge drops the rows it would drop in production: where the candidate
-  changes the sorting key of such a table, the two trial tables can end up with different row counts, and
-  the result says so. A rebuild script recreates the table's projections.
+- Without a readable `system.query_log`, a scan still covers sizes, codecs, types, partitioning and file
+  counts, and says why the log is unavailable and how to switch it on.
+- Savings in recommendations are estimates. A trial measures them.
 
-## Releases
+## License
 
-Commits follow [Conventional Commits](https://www.conventionalcommits.org). On every push to `main`,
-[release-please](https://github.com/googleapis/release-please) keeps a release PR open that collects them
-and bumps `version.txt` and `CHANGELOG.md`. Merging that PR tags `vX.Y.Z`, creates the GitHub release and
-starts the image build: Jib builds the image with the frontend inside and pushes it to the registry in the
-repository variable `IMAGE_REPOSITORY`, tagged `latest`, the version and the short commit. Both workflows
-run on the self-hosted runner, which has `NEXUS_USERNAME` / `NEXUS_PASSWORD` in its environment.
-
-```sh
-cd backend
-./gradlew jibDockerBuild -PwithFrontend   # granulee:latest in the local Docker daemon
-docker run -p 8080:8080 -v granulee-data:/data granulee:latest
-```
-
-`deploy/compose.server.yaml` is the stack that runs it on the server. `GET /api/health` answers with the
-running version.
+[MIT](LICENSE)

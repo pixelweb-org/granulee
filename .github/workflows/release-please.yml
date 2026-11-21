@@ -20,6 +20,8 @@ concurrency:
 
 jobs:
   release:
+    # The runner is this repository's own. A fork has none, and must never borrow this one.
+    if: github.repository == 'pixelweb-org/granulee'
     runs-on: [self-hosted, Linux]
     steps:
       - name: Release or update the release PR

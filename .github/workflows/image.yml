@@ -17,9 +17,11 @@ concurrency:
 
 jobs:
   image:
+    # The runner is this repository's own. A fork has none, and must never borrow this one.
+    if: github.repository == 'pixelweb-org/granulee'
     runs-on: [self-hosted, Linux]
     env:
-      # e.g. 192.168.3.88:18082/granulee, set as the repository variable IMAGE_REPOSITORY
+      # e.g. registry.example.com/granulee, set as the repository variable IMAGE_REPOSITORY
       IMAGE: ${{ vars.IMAGE_REPOSITORY }}
     steps:
       - uses: actions/checkout@v7
@@ -42,7 +44,8 @@ jobs:
         working-directory: backend
         run: ./gradlew build -PwithFrontend
 
-      # NEXUS_USERNAME / NEXUS_PASSWORD come from the runner's environment.
+      # NEXUS_USERNAME / NEXUS_PASSWORD come from the runner's environment. They are not GitHub secrets, so
+      # nothing masks them in the log: no step may print either of them.
       - name: Check registry credentials
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -56,10 +59,10 @@ jobs:
           fi
           status=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" "http://${IMAGE%%/*}/v2/")
           if [ "$status" != "200" ]; then
-            echo "::error::Nexus rejected the login for $NEXUS_USERNAME (HTTP $status)"
+            echo "::error::The registry rejected the login (HTTP $status)"
             exit 1
           fi
-          echo "Logged in to ${IMAGE%%/*} as $NEXUS_USERNAME"
+          echo "The registry accepts the login"
 
       # The registry is plain HTTP, so Jib must be allowed to send credentials over it.
       - name: Build and push image

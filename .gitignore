@@ -1,3 +1,5 @@
 .DS_Store
 .idea/
 *.iml
+# The stack file of one's own server: hosts, paths and ports that belong to nobody else.
+deploy/compose.server.yaml

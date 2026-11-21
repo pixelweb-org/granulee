@@ -1,0 +1,14 @@
+.git
+.github
+.claude
+.idea
+**/.DS_Store
+**/node_modules
+frontend/dist
+backend/build
+backend/.gradle
+backend/.kotlin
+backend/data
+docs
+dev
+deploy
