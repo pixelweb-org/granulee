@@ -1,59 +1,39 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import type { QueryAnalyze, QueryExplain, Trial, TrialQueryResult, TrialResult } from '../api/types';
-import { fmtBytes, fmtInt, fmtMs, fmtPct, fmtRows, fmtSpeed } from '../lib/format';
+import { fmtBytes, fmtInt, fmtMs, fmtMsPair, fmtPct, fmtRows } from '../lib/format';
+import { refLabel, refName, mentioned, verdictColor, type Guide, type QueryVerdict } from '../lib/trialGuide';
 import { vars } from '../lib/style';
 import { Choice } from './Button';
 import { Card } from './Card';
 import { PlanSteps, ReadFacts } from './PlanSteps';
-import { Status, StatusDot, type Tone } from './StatusDot';
 
-/** What the timed runs say about one query: which table is faster, or that they do not say. */
-export interface QueryVerdict {
-  kind: 'faster' | 'slower' | 'same' | 'unclear' | 'none';
-  text: string;
-  tone: Tone;
-  /** Baseline median over candidate median: above 1 the candidate is faster. */
-  speedup: number | null;
-}
+const share = (q: TrialQueryResult) => fmtPct(q.share, q.share < 0.1 && q.share > 0 ? 1 : 0);
 
-export function queryVerdict(q: TrialQueryResult): QueryVerdict {
-  if (q.error || q.baseMs == null || q.candMs == null || !(q.baseMs > 0) || !(q.candMs > 0)) {
-    return { kind: 'none', text: q.error ? 'not run' : '—', tone: 'muted', speedup: null };
-  }
-  const speed = fmtSpeed(q.baseMs, q.candMs);
-  const speedup = q.baseMs / q.candMs;
-  // The medians only tell the tables apart when no run of one took as long as a run of the other.
-  const b = q.baseRuns ?? [];
-  const c = q.candRuns ?? [];
-  const overlap = b.length > 0 && c.length > 0 && Math.max(Math.min(...b), Math.min(...c)) <= Math.min(Math.max(...b), Math.max(...c));
-  if (speed.same) return { kind: 'same', text: 'same', tone: 'muted', speedup };
-  if (overlap) return { kind: 'unclear', text: 'no clear difference', tone: 'muted', speedup };
-  if (speed.slower) return q.candMs > q.baseMs * 1.05 ? { kind: 'slower', text: speed.text, tone: 'error', speedup } : { kind: 'same', text: speed.text, tone: 'muted', speedup };
-  return { kind: 'faster', text: speed.text, tone: 'success', speedup };
-}
-
-const SORTS = [
-  { value: 'share', label: 'Workload share' },
-  { value: 'change', label: 'Biggest change' },
-  { value: 'time', label: 'Baseline time' },
-] as const;
-type Sort = (typeof SORTS)[number]['value'];
-
-/** The Queries tab of a trial: how every replayed query fared, then each one in detail. */
-export function TrialQueries({ trial, result: r }: { trial: Trial; result: TrialResult }) {
-  const [sort, setSort] = useState<Sort>('share');
-  const [open, setOpen] = useState<string | null>(null);
-  const verdicts = new Map(r.queries.map((q) => [q.label, queryVerdict(q)]));
-  const count = (kind: QueryVerdict['kind']) => r.queries.filter((q) => verdicts.get(q.label)!.kind === kind).length;
-  const share = (kind: QueryVerdict['kind']) => r.queries.filter((q) => verdicts.get(q.label)!.kind === kind).reduce((a, q) => a + q.share, 0);
-  const shift = (q: TrialQueryResult) => Math.abs(Math.log2(verdicts.get(q.label)!.speedup ?? 1));
-  const sorted = [...r.queries].sort((a, b) =>
-    sort === 'change' ? shift(b) - shift(a) : sort === 'time' ? (b.baseMs ?? 0) - (a.baseMs ?? 0) : b.share - a.share || a.label.localeCompare(b.label, undefined, { numeric: true }),
-  );
-  const show = (label: string) => {
-    setOpen(label);
-    requestAnimationFrame(() => document.getElementById(`query-${label}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
-  };
+/**
+ * The Speed step of a trial: every replayed query on one line, how much faster or slower the candidate answered it,
+ * and next to the list the one that is picked: its runs, what it read and what that says.
+ */
+export function TrialSpeed({
+  trial,
+  result: r,
+  guide,
+  selected,
+  onSelect,
+}: {
+  trial: Trial;
+  result: TrialResult;
+  guide: Guide;
+  selected: string | null;
+  onSelect: (label: string) => void;
+}) {
+  const [filter, setFilter] = useState<'all' | 'clear'>('all');
+  const [plansFor, setPlansFor] = useState<string | null>(null);
+  const detail = useRef<HTMLDivElement>(null);
+  const plansAt = useRef<HTMLElement>(null);
+  const verdict = (q: TrialQueryResult) => guide.verdicts.get(q.label)!;
+  const clear = r.queries.filter((q) => verdict(q).kind === 'faster' || verdict(q).kind === 'slower');
+  const picked = r.queries.find((q) => q.label === selected) ?? clear[0] ?? r.queries[0];
+  const plans = picked != null && plansFor === picked.label;
 
   if (!r.queries.length) {
     return (
@@ -66,319 +46,233 @@ export function TrialQueries({ trial, result: r }: { trial: Trial; result: Trial
     );
   }
 
+  // The scale is logarithmic, so twice as fast and twice as slow are the same distance from the middle.
+  const shifts = r.queries.map((q) => Math.abs(Math.log2(verdict(q).speedup ?? 1)));
+  const factor = [2, 4, 8, 16, 32, 64, 128].find((f) => Math.log2(f) >= Math.max(...shifts) - 1e-9) ?? 128;
+  const limit = Math.log2(factor);
+  const shown = filter === 'clear' ? clear : r.queries;
+  const pick = (label: string) => {
+    onSelect(label);
+    // Stacked on a narrow screen the detail sits below the list: bring it into view.
+    requestAnimationFrame(() => {
+      const box = detail.current?.getBoundingClientRect();
+      if (box && (box.top > window.innerHeight * 0.7 || box.bottom < 0)) detail.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+  };
+  const hasPlans = !!(picked.baseExplain || picked.candExplain || picked.baseAnalyze || picked.candAnalyze);
+  const ref = guide.cmp === 'defaults' ? { plan: picked.plainExplain ?? null, run: null } : { plan: picked.baseExplain, run: picked.baseAnalyze };
+
   return (
     <>
-      <section aria-label="Replayed queries" className="grid-auto" style={vars({ min: 200 })}>
-        <Tile label="Queries replayed" value={fmtInt(r.queries.length)} sub={`${trial.request.runsPerQuery} runs each per table`} />
-        <Tile label="Clearly faster" value={fmtInt(count('faster'))} sub={`${fmtPct(share('faster'), 0)} of the workload`} tone="success" />
-        <Tile label="Clearly slower" value={fmtInt(count('slower'))} sub={`${fmtPct(share('slower'), 0)} of the workload`} tone={count('slower') ? 'error' : 'muted'} />
-        <Tile label="No clear difference" value={fmtInt(count('unclear') + count('same'))} sub="runs overlap, or the medians match" />
-      </section>
-
-      <SpeedOverview queries={r.queries} verdicts={verdicts} onPick={show} />
-      <NewIndexes trial={trial} result={r} />
-
       <section className="stack">
-        <div className="between" style={{ alignItems: 'center' }}>
-          <h2 className="card-title">Each query</h2>
-          <div role="group" aria-label="Sort queries" className="row">
-            {SORTS.map((s) => (
-              <Choice key={s.value} pressed={sort === s.value} onClick={() => setSort(s.value)}>
-                {s.label}
-              </Choice>
-            ))}
+        <div className="tg-bar">
+          <div role="group" aria-label="Which queries to show" className="row">
+            <Choice pressed={filter === 'all'} onClick={() => setFilter('all')}>
+              All {fmtInt(r.queries.length)}
+            </Choice>
+            <Choice pressed={filter === 'clear'} onClick={() => setFilter('clear')}>
+              Clearly different {fmtInt(clear.length)}
+            </Choice>
           </div>
+          <span className="caption muted">
+            {fmtInt(r.queries.length)} {r.queries.length === 1 ? 'query' : 'queries'} replayed, {trial.request.runsPerQuery} runs per table, taking turns. The candidate
+            against {refName(guide.cmp)}; pick one to see its detail.
+          </span>
         </div>
-        <ol className="stack" style={{ listStyle: 'none', margin: 0, padding: 0, ...vars({ gap: 12 }) }}>
-          {sorted.map((q) => (
-            <QueryCard key={q.label} q={q} verdict={verdicts.get(q.label)!} open={open === q.label} onToggle={() => setOpen(open === q.label ? null : q.label)} />
-          ))}
-        </ol>
+        <div className="tg-split">
+          <div className="card tg-list">
+            <div className="eyebrow tg-list__head" aria-hidden="true">
+              <span className="tg-pick__id">Query · share</span>
+              <span className="tg-list__scale">
+                <span>{factor}× slower</span>
+                <span>same</span>
+                <span>{factor}× faster</span>
+              </span>
+              <span className="tg-pick__out">Outcome</span>
+            </div>
+            {shown.map((q) => {
+              const v = verdict(q);
+              const x = Math.max(-limit, Math.min(limit, Math.log2(v.speedup ?? 1)));
+              const width = Math.max((Math.abs(x) / limit) * 50, v.speedup == null ? 0 : 1);
+              return (
+                <button
+                  type="button"
+                  key={q.label}
+                  className="g-rowbtn tg-pick"
+                  aria-pressed={q.label === picked.label}
+                  onClick={() => pick(q.label)}
+                  title={v.refMs != null && q.candMs != null ? `${q.label}: ${fmtMsPair(v.refMs, q.candMs)}` : q.label}
+                >
+                  <span className="g-num tg-pick__id">
+                    <strong>{q.label}</strong> <span className="muted">{share(q)}</span>
+                  </span>
+                  <span className="tg-div tg-div--lg">
+                    <span className="tg-div__bar" style={{ background: verdictColor(v.kind), width: `${width}%`, ...(x >= 0 ? { left: '50%' } : { right: '50%' }) }} />
+                  </span>
+                  <span className="g-num tg-pick__out">{v.text}</span>
+                </button>
+              );
+            })}
+            {!shown.length ? <p className="body-sm muted tg-list__note">No query is clearly faster or slower.</p> : null}
+            <p className="caption muted tg-list__note">Grey bars: the runs of the two tables overlap, so the difference is not reliable.</p>
+          </div>
+          <QueryDetail key={picked.label} q={picked} verdict={verdict(picked)} result={r} guide={guide} trial={trial} boxRef={detail}>
+            {hasPlans ? (
+              <button
+                type="button"
+                className="cc-btn cc-btn--link"
+                style={{ alignSelf: 'flex-start' }}
+                aria-expanded={plans}
+                onClick={() => {
+                  setPlansFor(plans ? null : picked.label);
+                  if (!plans) requestAnimationFrame(() => plansAt.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+                }}
+              >
+                {plans ? 'Hide the query plans' : 'Show both query plans'}
+              </button>
+            ) : null}
+          </QueryDetail>
+        </div>
       </section>
+
+      {plans && hasPlans ? (
+        <section className="stack tg-anchor" ref={plansAt} aria-label={`Query plans of ${picked.label}`}>
+          <h2 className="card-title">Query plans of {picked.label}</h2>
+          <div className="grid-auto" style={vars({ min: 360, gap: 24 })}>
+            <PlanSide title={refLabel(guide.cmp)} plan={ref.plan} run={ref.run} />
+            <PlanSide title="Candidate" plan={picked.candExplain} run={picked.candAnalyze} />
+          </div>
+        </section>
+      ) : null}
+
+      <NewIndexes trial={trial} result={r} />
     </>
   );
 }
 
-function Tile({ label, value, sub, tone }: { label: string; value: string; sub: string; tone?: Tone }) {
-  return (
-    <div className="tile">
-      <span className="caption muted">{label}</span>
-      <span className="headline">{value}</span>
-      {tone ? (
-        <Status tone={tone} className="caption g-num">
-          {sub}
-        </Status>
-      ) : (
-        <span className="caption muted g-num">{sub}</span>
-      )}
-    </div>
-  );
+/** One sentence or two on why a query came out as it did: what it touches of the change, and what the runs show. */
+function why(q: TrialQueryResult, v: QueryVerdict, r: TrialResult, guide: Guide, trial: Trial): string {
+  if (v.kind === 'none') return q.error ? `Not run: ${q.error}` : 'Not measured on both tables.';
+  const added = (trial.request.addIndexes ?? []).map((i) => i.name);
+  const used = (q.candExplain?.steps ?? []).find((s) => s.kind === 'skip' && added.includes(s.name));
+  const names = mentioned(q, r);
+  const columns = guide.changes.filter((c) => c.kind === 'column').length;
+  const touches =
+    guide.cmp === 'defaults'
+      ? 'Plain defaults have no skip indexes or projections and the default codec on every column.'
+      : used
+        ? used.granulesAfter < used.granulesBefore
+          ? `Uses the new skip index ${used.name}: ${fmtInt(used.granulesBefore)} → ${fmtInt(used.granulesAfter)} granules.`
+          : `Asks the new skip index ${used.name}, which drops none of the ${fmtInt(used.granulesBefore)} granules.`
+        : names.length
+          ? `Mentions ${names.join(', ')}, which this trial changed.`
+          : guide.changes.some((c) => c.kind === 'key')
+            ? 'The candidate stores the rows in another order, which changes what every query has to read.'
+            : columns
+              ? `Mentions ${columns === 1 ? 'not the changed column' : 'none of the changed columns'}.`
+              : '';
+  const c = q.candRuns ?? [];
+  const where = refName(guide.cmp);
+  let runs: string;
+  if (v.refRuns.length < 2 || c.length < 2) runs = 'This trial kept only the medians, so how far the runs spread is not known.';
+  else if (v.kind === 'faster') runs = `Every candidate run was faster than the fastest run on ${where}.`;
+  else if (v.kind === 'slower') runs = `Every candidate run was slower than the slowest run on ${where}.`;
+  else if (v.kind === 'same') runs = 'The medians match.';
+  else {
+    const lo = Math.max(Math.min(...v.refRuns), Math.min(...c));
+    const hi = Math.min(Math.max(...v.refRuns), Math.max(...c));
+    runs =
+      Math.abs(Math.log2(v.speedup ?? 1)) > Math.log2(1.3)
+        ? `The medians differ a lot, but both tables had runs between ${fmtMsPair(lo, hi).replace(' → ', ' and ')}. Not reliable.`
+        : 'The runs overlap, so this is noise.';
+  }
+  return [touches, runs].filter(Boolean).join(' ');
 }
 
-// The overview draws a change of up to this factor in either direction; anything beyond is pinned to the edge.
-const MAX_FACTOR = 8;
-
-/**
- * Every query on one line: how much faster or slower the candidate answered it. The scale is logarithmic,
- * so twice as fast and twice as slow are the same distance from the middle.
- */
-function SpeedOverview({ queries, verdicts, onPick }: { queries: TrialQueryResult[]; verdicts: Map<string, QueryVerdict>; onPick: (label: string) => void }) {
-  const rows = queries.filter((q) => verdicts.get(q.label)!.speedup != null);
-  if (!rows.length) return null;
-  const limit = Math.log2(MAX_FACTOR);
+function QueryDetail({
+  q,
+  verdict: v,
+  result: r,
+  guide,
+  trial,
+  boxRef,
+  children,
+}: {
+  q: TrialQueryResult;
+  verdict: QueryVerdict;
+  result: TrialResult;
+  guide: Guide;
+  trial: Trial;
+  boxRef: Ref<HTMLDivElement>;
+  children?: ReactNode;
+}) {
+  const defaults = guide.cmp === 'defaults';
+  const lanes = [
+    ...(q.plainMs != null ? [{ name: 'Plain defaults', slot: 3, median: q.plainMs, runs: q.plainRuns ?? [] }] : []),
+    ...(q.baseMs != null ? [{ name: 'Today', slot: 1, median: q.baseMs, runs: q.baseRuns ?? [] }] : []),
+    ...(q.candMs != null ? [{ name: 'Candidate', slot: 2, median: q.candMs, runs: q.candRuns ?? [] }] : []),
+  ];
+  const max = Math.max(...lanes.flatMap((l) => [l.median, ...l.runs]), 0) * 1.15 || 1;
+  const at = (ms: number) => `${Math.min(100, (ms / max) * 100)}%`;
+  const refRows = defaults ? q.plainReadRows : q.baseReadRows;
+  const refPlan = defaults ? q.plainExplain : q.baseExplain;
+  const pair = (a: number | null | undefined, b: number | null | undefined, f: (v: number) => string) => (a != null && b != null ? `${f(a)} → ${f(b)}` : null);
+  const facts = [
+    ['Rows read', pair(refRows, q.candReadRows, fmtRows)],
+    ['Granules read', pair(refPlan?.granulesRead, q.candExplain?.granulesRead, fmtInt)],
+    ['Read streams', pair(refPlan?.streams, q.candExplain?.streams, fmtInt)],
+    ['CPU time', defaults ? null : pair(q.baseCpuMs, q.candCpuMs, fmtMs)],
+  ].filter((f): f is [string, string] => f[1] != null);
   return (
-    <figure className="bd-chart q-speed">
-      <figcaption className="bd-chart-head">
-        <div>
-          <p className="card-title">Speed per query</p>
-          <p className="caption bd-chart-sub">Candidate against baseline, by the median of the timed runs · most frequent query first</p>
-        </div>
-      </figcaption>
-      <div className="q-speed__rows">
-        <div className="q-speed__row q-speed__row--axis caption muted" aria-hidden="true">
-          <span />
-          <span className="q-speed__axis">
-            <span>{MAX_FACTOR}× slower</span>
-            <span>same</span>
-            <span>{MAX_FACTOR}× faster</span>
-          </span>
-          <span />
-        </div>
-        {rows.map((q) => {
-          const v = verdicts.get(q.label)!;
-          const x = Math.max(-limit, Math.min(limit, Math.log2(v.speedup!)));
-          const width = (Math.abs(x) / limit) * 50;
-          const tone = v.kind === 'faster' ? 'faster' : v.kind === 'slower' ? 'slower' : 'unclear';
-          return (
-            <button
-              type="button"
-              key={q.label}
-              className="q-speed__row"
-              onClick={() => onPick(q.label)}
-              title={`${q.label}: ${fmtMs(q.baseMs)} → ${fmtMs(q.candMs)}, ${v.text} · ${fmtPct(q.share, 0)} of the workload`}
-            >
-              <span className="q-speed__name g-num">
-                <span className="ink" style={{ fontWeight: 700 }}>
-                  {q.label}
-                </span>{' '}
-                <span className="muted">{fmtPct(q.share, 0)}</span>
-              </span>
-              <span className="q-speed__track">
-                <span
-                  className={`q-speed__bar q-speed__bar--${tone} ${x >= 0 ? 'q-speed__bar--right' : 'q-speed__bar--left'}`}
-                  style={x >= 0 ? { left: '50%', width: `${width}%` } : { right: '50%', width: `${width}%` }}
-                />
-              </span>
-              <span className="q-speed__value g-num">{v.text}</span>
-            </button>
-          );
-        })}
-      </div>
-      <ul className="bd-chart-legend caption" style={{ margin: 0 }}>
-        <li>
-          <span className="bd-chart-key-rect q-speed__bar--faster" /> clearly faster
-        </li>
-        <li>
-          <span className="bd-chart-key-rect q-speed__bar--slower" /> clearly slower
-        </li>
-        <li>
-          <span className="bd-chart-key-rect q-speed__bar--unclear" /> no clear difference: the runs of the two tables overlap
-        </li>
-      </ul>
-    </figure>
-  );
-}
-
-/** One replayed query. Closed it shows the outcome and the runs; open it adds the work per run and the plans. */
-function QueryCard({ q, verdict, open, onToggle }: { q: TrialQueryResult; verdict: QueryVerdict; open: boolean; onToggle: () => void }) {
-  const id = `query-${q.label}`;
-  return (
-    <li id={id} className={`card card-row q-card${verdict.kind === 'slower' ? ' is-worse' : ''}`}>
-      <button type="button" className="q-card__head" aria-expanded={open} aria-controls={`${id}-detail`} onClick={onToggle}>
-        <span className="g-count g-num" style={{ flex: 'none' }}>
-          {q.label}
+    <div className="card tg-detail" aria-live="polite" ref={boxRef}>
+      <div className="row" style={vars({ gap: 12 })}>
+        <span className="g-count g-num">{q.label}</span>
+        <span className="tg-outcome">
+          <span aria-hidden="true" className="tg-dot" style={{ background: verdictColor(v.kind) }} />
+          {v.text}
         </span>
-        <span className={open ? 'g-sql g-sql--full' : 'g-sql g-sql--clamp'}>{q.query}</span>
-        <svg className="g-acc__chev q-card__chev" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-          <path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      <div className="q-card__summary">
-        <dl className="facts">
-          <Fact label="Share of workload">{fmtPct(q.share, 0)}</Fact>
-          {q.plainMs != null ? <Fact label="Plain defaults">{fmtMs(q.plainMs)}</Fact> : null}
-          <Fact label="Baseline">{fmtMs(q.baseMs)}</Fact>
-          <Fact label="Candidate" strong>
-            {fmtMs(q.candMs)}
-          </Fact>
-          <div>
-            <dt className="eyebrow">Outcome</dt>
-            <dd>
-              {q.error ? (
-                <span className="status body-sm g-wrap">
-                  <StatusDot tone="muted" />
-                  Not run
-                </span>
-              ) : (
-                <span className="status" style={{ fontWeight: 700 }}>
-                  <StatusDot tone={verdict.tone} />
-                  {verdict.text}
-                </span>
-              )}
-            </dd>
-          </div>
-        </dl>
-        {q.baseMs != null && q.candMs != null ? <RunsPlot q={q} compact /> : null}
+        <span className="body-sm g-num muted">{share(q)} of the workload</span>
       </div>
-      {q.error ? <p className="body-sm muted g-wrap">Not run: {q.error}</p> : null}
-      {open ? (
-        <div id={`${id}-detail`} className="stack q-card__detail" style={vars({ gap: 24 })}>
-          {q.baseMs != null && q.candMs != null ? (
-            <div className="grid-auto" style={vars({ min: 360, gap: 24 })}>
-              <div className="stack" style={vars({ gap: 8 })}>
-                <h3 className="eyebrow">Timed runs</h3>
-                <RunsPlot q={q} />
-                <p className="caption muted">
-                  {(q.baseRuns?.length ?? 0) < 2
-                    ? 'This trial kept only the medians, so the spread of its runs is not shown.'
-                    : 'Every line is one run, the dot is the median the outcome is read from. The tables took turns, and the first run of each only warmed up.'}
-                </p>
+      <span className="g-sql g-sql--full">{q.query}</span>
+      {lanes.length ? (
+        <div className="tg-block tg-runs">
+          <span className="eyebrow">Timed runs, fastest to slowest, dot = median</span>
+          {lanes.map((l) => {
+            const lo = Math.min(...l.runs);
+            const hi = Math.max(...l.runs);
+            const spread = l.runs.length > 1;
+            return (
+              <div
+                key={l.name}
+                className="tg-run"
+                style={{ '--series': `var(--chart-${l.slot})` } as CSSProperties}
+                title={`${l.name}: median ${fmtMs(l.median)}${spread ? `, runs ${l.runs.map((ms) => fmtMs(ms)).join(', ')}` : ''}`}
+              >
+                <span className="body-sm tg-run__name">{l.name}</span>
+                <span className="tg-run__track">
+                  {spread ? <span aria-hidden="true" className="tg-run__range" style={{ left: at(lo), width: `calc(${at(hi)} - ${at(lo)})` }} /> : null}
+                  <span aria-hidden="true" className="tg-run__dot" style={{ left: at(l.median) }} />
+                </span>
+                <span className="g-num tg-run__value">
+                  <strong>{fmtMs(l.median)}</strong> {spread ? <span className="muted">{fmtMsPair(lo, hi).replace(' → ', ' to ')}</span> : null}
+                </span>
               </div>
-              <div className="stack" style={vars({ gap: 8 })}>
-                <h3 className="eyebrow">Work per run</h3>
-                <WorkBars q={q} />
-              </div>
-            </div>
-          ) : null}
-          {q.baseExplain || q.candExplain || q.baseAnalyze || q.candAnalyze ? (
-            <div className="grid-auto" style={vars({ min: 360, gap: 24 })}>
-              <PlanSide title="Baseline" plan={q.baseExplain} run={q.baseAnalyze} />
-              <PlanSide title="Candidate" plan={q.candExplain} run={q.candAnalyze} />
-            </div>
-          ) : null}
+            );
+          })}
         </div>
       ) : null}
-    </li>
-  );
-}
-
-function Fact({ label, strong, children }: { label: string; strong?: boolean; children: ReactNode }) {
-  return (
-    <div>
-      <dt className="eyebrow">{label}</dt>
-      <dd className={strong ? 'strong' : undefined}>{children}</dd>
-    </div>
-  );
-}
-
-/** A round number at or above the value, for the end of an axis: 1, 2 or 5 times a power of ten. */
-function niceMax(value: number): number {
-  if (!(value > 0)) return 1;
-  const power = Math.pow(10, Math.floor(Math.log10(value)));
-  const step = [1, 2, 5, 10].find((m) => m * power >= value) ?? 10;
-  return step * power;
-}
-
-/**
- * The timed runs of one query on both tables, on one time axis that starts at zero. A line per run, a band from the
- * fastest to the slowest, a dot at the median. Whether the two bands overlap is what the outcome goes by.
- */
-function RunsPlot({ q, compact }: { q: TrialQueryResult; compact?: boolean }) {
-  const lanes = [
-    // The table with plain defaults is the point of reference; it leads where the trial built one.
-    ...(q.plainMs != null ? [{ name: 'Defaults', slot: 3, median: q.plainMs, runs: q.plainRuns?.length ? q.plainRuns : [q.plainMs] }] : []),
-    { name: 'Baseline', slot: 1, median: q.baseMs!, runs: q.baseRuns?.length ? q.baseRuns : [q.baseMs!] },
-    { name: 'Candidate', slot: 2, median: q.candMs!, runs: q.candRuns?.length ? q.candRuns : [q.candMs!] },
-  ];
-  const max = niceMax(Math.max(...lanes.flatMap((l) => l.runs)) * 1.02);
-  const at = (ms: number) => `${Math.min(100, (ms / max) * 100)}%`;
-  return (
-    <div className={`q-runs${compact ? ' q-runs--compact' : ''}`}>
-      {lanes.map((l) => {
-        const lo = Math.min(...l.runs);
-        const hi = Math.max(...l.runs);
-        const runs = l.runs.length > 1 ? `, runs ${l.runs.map((ms) => fmtMs(ms)).join(', ')}` : '';
-        return (
-          <div key={l.name} className="q-runs__lane" title={`${l.name}: median ${fmtMs(l.median)}${runs}`}>
-            <span className="q-runs__name caption">
-              <span className="bd-chart-key-rect" style={{ background: `var(--chart-${l.slot})` }} />
-              {l.name}
-            </span>
-            <span className="q-runs__track" style={{ '--series': `var(--chart-${l.slot})` } as CSSProperties}>
-              {l.runs.length > 1 ? <span className="q-runs__band" style={{ left: at(lo), width: `calc(${at(hi)} - ${at(lo)})` }} /> : null}
-              {l.runs.length > 1 ? l.runs.map((ms, i) => <span key={i} className="q-runs__run" style={{ left: at(ms) }} />) : null}
-              <span className="q-runs__median" style={{ left: at(l.median) }} />
-            </span>
-            <span className="q-runs__value caption g-num">{fmtMs(l.median)}</span>
-          </div>
-        );
-      })}
-      {compact ? null : (
-        <div className="q-runs__lane q-runs__axis caption muted g-num" aria-hidden="true">
-          <span />
-          <span className="q-runs__ticks">
-            <span>0</span>
-            <span>{fmtMs(max / 2)}</span>
-            <span>{fmtMs(max)}</span>
-          </span>
-          <span />
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * What one run costs on each table, a measure per row: time, CPU time, rows read, granules read. Each row has its
- * own scale, set by the larger of its two values, so the bars compare the tables and not the measures.
- */
-function WorkBars({ q }: { q: TrialQueryResult }) {
-  const rows: { name: string; base: number | null | undefined; cand: number | null | undefined; plain?: number | null; format: (v: number) => string }[] = [
-    { name: 'Median time', base: q.baseMs, cand: q.candMs, plain: q.plainMs, format: fmtMs },
-    { name: 'CPU time', base: q.baseCpuMs, cand: q.candCpuMs, format: fmtMs },
-    { name: 'Rows read', base: q.baseReadRows, cand: q.candReadRows, plain: q.plainReadRows, format: fmtRows },
-    { name: 'Granules read', base: q.baseExplain?.granulesRead, cand: q.candExplain?.granulesRead, plain: q.plainExplain?.granulesRead, format: fmtInt },
-  ];
-  const shown = rows.filter((r): r is typeof r & { base: number; cand: number } => r.base != null && r.cand != null);
-  if (!shown.length) return null;
-  return (
-    <div className="q-work">
-      {shown.map((r) => {
-        const max = Math.max(r.base, r.cand, r.plain ?? 0);
-        const change = r.base > 0 ? (r.cand - r.base) / r.base : 0;
-        return (
-          <div
-            key={r.name}
-            className="q-work__row"
-            title={`${r.name}: ${r.plain != null ? `plain defaults ${r.format(r.plain)}, ` : ''}baseline ${r.format(r.base)}, candidate ${r.format(r.cand)}`}
-          >
-            <span className="caption">{r.name}</span>
-            <span className="q-work__bars">
-              {r.plain != null ? <span className="q-work__bar" style={{ width: max > 0 ? `${(r.plain / max) * 100}%` : 0, background: 'var(--chart-3)' }} /> : null}
-              <span className="q-work__bar" style={{ width: max > 0 ? `${(r.base / max) * 100}%` : 0, background: 'var(--chart-1)' }} />
-              <span className="q-work__bar" style={{ width: max > 0 ? `${(r.cand / max) * 100}%` : 0, background: 'var(--chart-2)' }} />
-            </span>
-            <span className="caption g-num q-work__value">
-              {r.plain != null ? <span className="muted">defaults {r.format(r.plain)} · </span> : null}
-              {r.format(r.base)} → <span className="ink" style={{ fontWeight: 700 }}>{r.format(r.cand)}</span>
-              {Math.abs(change) >= 0.005 ? <span className="muted"> · {change > 0 ? '+' : '−'}{fmtPct(Math.abs(change), 0)}</span> : null}
-            </span>
-          </div>
-        );
-      })}
-      <ul className="bd-chart-legend caption" style={{ margin: 0 }}>
-        {shown.some((r) => r.plain != null) ? (
-          <li>
-            <span className="bd-chart-key-rect" style={{ background: 'var(--chart-3)' }} /> Plain defaults
-          </li>
-        ) : null}
-        <li>
-          <span className="bd-chart-key-rect" style={{ background: 'var(--chart-1)' }} /> Baseline
-        </li>
-        <li>
-          <span className="bd-chart-key-rect" style={{ background: 'var(--chart-2)' }} /> Candidate
-        </li>
-      </ul>
+      {facts.length ? (
+        <dl className="facts tg-block">
+          {facts.map(([label, value]) => (
+            <div key={label}>
+              <dt className="eyebrow">{label}</dt>
+              <dd className="g-num">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      <p className="body-sm g-wrap">{why(q, v, r, guide, trial)}</p>
+      {children}
     </div>
   );
 }

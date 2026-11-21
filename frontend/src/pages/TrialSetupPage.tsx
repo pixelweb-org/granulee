@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { QueryLogNote } from '../components/QueryLogGuide';
 import { useSources } from '../state/sources';
-import type { Sampling, TrialIndex, TrialPlan, TrialPlanColumn, TrialPlanRecommendation, TrialRequest } from '../api/types';
+import type { Sampling, Trial, TrialIndex, TrialPlan, TrialPlanColumn, TrialPlanRecommendation, TrialRequest } from '../api/types';
 import { useAction, useApi } from '../hooks/useApi';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
@@ -94,6 +94,40 @@ function initialSchema(plan: TrialPlan): Schema {
   return plan.recommendations.filter(startsTicked).reduce(applyRec, { partitionKey: plan.partitionKey, sortingKey: plan.sortingKey, cols, dropIndexes: [], addIndexes: [] });
 }
 
+/** A trial that continues another one: its candidate, with the codecs picked from its codec comparison on top. */
+interface FollowUp {
+  origin: Trial;
+  codecs: Record<string, string>; // column → codec; "" = the server's default
+}
+
+function followUpSchema(plan: TrialPlan, { origin, codecs }: FollowUp): Schema {
+  const req = origin.request;
+  const cols: Schema['cols'] = {};
+  for (const c of plan.columns) {
+    const was = req.columns.find((x) => x.name === c.name);
+    cols[c.name] = { type: was?.type || c.baselineType, codec: codecs[c.name] ?? was?.codec ?? baselineCodec(c) };
+  }
+  return {
+    partitionKey: req.partitionKey || plan.partitionKey,
+    sortingKey: req.sortingKey || plan.sortingKey,
+    cols,
+    // The table may have moved on since that trial: only what still applies to it.
+    dropIndexes: (req.dropIndexes ?? []).filter((name) => plan.indexes.includes(name)),
+    addIndexes: (req.addIndexes ?? []).filter((i) => !plan.indexes.includes(i.name)),
+  };
+}
+
+function parsePicks(text: string | null): Record<string, string> {
+  if (!text) return {};
+  try {
+    const value: unknown = JSON.parse(text);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).filter((e): e is [string, string] => typeof e[1] === 'string'));
+  } catch {
+    return {};
+  }
+}
+
 export function TrialSetupPage() {
   const [params] = useSearchParams();
   const source = params.get('source') ?? '';
@@ -101,6 +135,10 @@ export function TrialSetupPage() {
   const table = params.get('table') ?? '';
   const ready = !!(source && database && table);
   const { data: plan, error, reload } = useApi(() => (ready ? api.trialPlan(source, database, table) : Promise.resolve(null)), [source, database, table]);
+  // "Set up a trial with these picks" on a trial's codec step leads here with that trial and the picks.
+  const from = params.get('from');
+  const picks = params.get('codecs');
+  const { data: origin, loading: originLoading } = useApi(() => (from ? api.trial(from) : Promise.resolve(null)), [from]);
 
   const header = (
     <PageHeader
@@ -128,7 +166,7 @@ export function TrialSetupPage() {
       </>
     );
   }
-  if (!plan) {
+  if (!plan || (from && originLoading)) {
     return (
       <>
         {header}
@@ -136,20 +174,23 @@ export function TrialSetupPage() {
       </>
     );
   }
+  const followUp: FollowUp | null =
+    origin && origin.sourceId === plan.sourceId && origin.database === plan.database && origin.table === plan.table ? { origin, codecs: parsePicks(picks) } : null;
   return (
     <>
       {header}
-      <TrialForm key={`${plan.sourceId}/${plan.database}/${plan.table}`} plan={plan} />
+      <TrialForm key={`${plan.sourceId}/${plan.database}/${plan.table}/${followUp?.origin.id ?? ''}`} plan={plan} followUp={followUp} />
     </>
   );
 }
 
-function TrialForm({ plan }: { plan: TrialPlan }) {
+function TrialForm({ plan, followUp }: { plan: TrialPlan; followUp: FollowUp | null }) {
   const navigate = useNavigate();
   const start = useAction();
-  const [schema, setSchema] = useState<Schema>(() => initialSchema(plan));
-  const [ticked, setTicked] = useState<string[]>(() => plan.recommendations.filter(startsTicked).map((r) => r.id));
-  const [name, setName] = useState(`Trial of ${plan.table}`);
+  // A follow-up starts from the earlier candidate, not from the recommendations: none of them is ticked.
+  const [schema, setSchema] = useState<Schema>(() => (followUp ? followUpSchema(plan, followUp) : initialSchema(plan)));
+  const [ticked, setTicked] = useState<string[]>(() => (followUp ? [] : plan.recommendations.filter(startsTicked).map((r) => r.id)));
+  const [name, setName] = useState(followUp ? `Codec follow-up of #${followUp.origin.id}` : `Trial of ${plan.table}`);
   const [rows, setRows] = useState(() => fmtInt(Math.min(plan.recommendedRows, plan.totalRows || plan.recommendedRows)));
   const [sampling, setSampling] = useState<Sampling>('even');
   const [where, setWhere] = useState('');
@@ -269,6 +310,20 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
               Data sources
             </Link>{' '}
             to start one.
+          </p>
+        ) : null}
+
+        {followUp ? (
+          <p className="g-notice" role="status">
+            This continues{' '}
+            <Link className="g-link" to={routes.trial(followUp.origin.id)}>
+              trial #{followUp.origin.id}
+            </Link>
+            : the candidate starts as that trial's candidate
+            {Object.keys(followUp.codecs).length
+              ? `, with the ${Object.keys(followUp.codecs).length === 1 ? 'codec' : 'codecs'} picked there for ${Object.keys(followUp.codecs).join(', ')}`
+              : ''}
+            . No recommendation is ticked; everything below can still be edited.
           </p>
         ) : null}
 

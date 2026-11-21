@@ -35,7 +35,8 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
 - **Codecs** are chosen by measuring, not by rule: a trial can build one more scratch table that holds the
   largest columns once per codec worth trying, in the candidate's row order, and weigh each variant. The
   report names the codec to use per column (the cheapest to read back within 3% of the smallest; the one in
-  place stays when it is among them), shows every variant, and gives the `ALTER` statements.
+  place stays when it is among them) and shows every variant. Tick the ones you want and "Set up a trial
+  with these picks" opens a follow-up trial: that trial's candidate with the picked codecs on top.
 - **Trials** build a baseline and a candidate table in a scratch database, copy the same sample of
   rows into both, merge them, and compare sizes, column scans, insert throughput and replayed queries.
   A replayed query runs several times on each table, the tables taking turns. The result shows the median,
@@ -48,10 +49,15 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
   narrowed it, the granules read and the read streams. On servers that have `EXPLAIN ANALYZE` it is run
   once more with it: the result then shows planning and execution time, peak memory, and for every step
   the rows in and out, its share of the time and the threads at work.
-  The result also shows the statements that would apply the candidate to the production table:
-  `ALTER TABLE` for column, codec and index changes, a rebuild script when a key changes.
-  "Apply to production" on a finished trial shows those statements again, computed against the table as
-  it is now, and runs the `ALTER`s after you confirm (the source's user needs `ALTER` on the table).
+  A finished trial is read in six steps under one verdict that stays in view: an overview that sorts
+  every measure into better, worse and no clear difference, what changed, size per column, codecs, speed
+  per query, and applying. A timing only counts as better or worse outside the server's run-to-run noise,
+  measured from the replayed queries (at least ±10%). Where the trial built the plain-defaults table, the
+  verdict can be switched to compare the candidate with that instead of today's table. "Export report"
+  saves the whole result as a Markdown file.
+  The last step shows the statements that apply the candidate to the production table, computed against
+  the table as it is now: `ALTER TABLE` for column, codec and index changes, a rebuild script when a key
+  changes. It runs the `ALTER`s after you confirm (the source's user needs `ALTER` on the table).
   A rebuild is only shown, never run. Once applied, the trial page offers `OPTIMIZE … FINAL` for the table,
   so existing parts are rewritten with the new codecs, and shows whether it is still running.
 

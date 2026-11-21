@@ -1,36 +1,34 @@
-import { Fragment, useState } from 'react';
-import type { CodecColumn, Trial, TrialResult } from '../api/types';
-import { fmtBytes, fmtInt, fmtMs, fmtPct, fmtRatio, fmtRows } from '../lib/format';
-import { vars } from '../lib/style';
-import { Card } from './Card';
-import { CodeBlock } from './CodeBlock';
-import { RowButton } from './RowButton';
+import { useRef, useState } from 'react';
+import type { Trial, TrialResult } from '../api/types';
+import { fmtBytes, fmtInt, fmtMs, fmtPct, fmtRatio } from '../lib/format';
+import { routes } from '../lib/routes';
+import { CODEC_WORTH, clauseOf, codecLabel, codecRows } from '../lib/trialGuide';
+import { Button, Choice } from './Button';
+import { CopyButton } from './CodeBlock';
 
-// A better codec is worth a statement from this saving on; below it the two count as equal.
-const WORTH = 0.03;
-
-const label = (codec: string, defaultIs?: string | null) => codec || (defaultIs ? `server default (${defaultIs})` : 'server default');
 const quote = (name: string) => '`' + name.replace(/\\/g, '\\\\').replace(/`/g, '\\`') + '`';
 
-/** "ORDER BY (…)" of a trial table's CREATE statement. */
-function orderOf(ddl: string): string {
-  const line = ddl.split('\n').find((l) => l.startsWith('ORDER BY '));
-  return line ? line.slice('ORDER BY '.length).trim() : '';
-}
-
-function sizes(c: CodecColumn) {
-  const today = c.variants.find((v) => v.codec === c.production) ?? null;
-  const best = c.variants.find((v) => v.codec === c.best) ?? null;
-  const saved = today && best ? today.compressedBytes - best.compressedBytes : 0;
-  const share = today && today.compressedBytes > 0 ? saved / today.compressedBytes : 0;
-  return { today, best, saved, share, change: c.best !== c.production && share >= WORTH };
-}
-
-/** The Codecs tab of a trial: for each of the largest columns, every codec that was tried and the one to use. */
-export function TrialCodecs({ trial, result: r }: { trial: Trial; result: TrialResult }) {
-  const [open, setOpen] = useState<string | null>(null);
-  const columns = r.codecs ?? [];
-  if (!columns.length) {
+/**
+ * The Codecs step of a trial: the columns for which a smaller codec was measured, each with every variant that was
+ * built, and the ones to take into a follow-up trial.
+ */
+export function TrialCodecs({
+  trial,
+  result: r,
+  picks,
+  onPicks,
+}: {
+  trial: Trial;
+  result: TrialResult;
+  picks: Record<string, boolean>;
+  onPicks: (picks: Record<string, boolean>) => void;
+}) {
+  const rows = codecRows(r);
+  const better = rows.filter((x) => x.better);
+  const [filter, setFilter] = useState<'better' | 'all'>(better.length ? 'better' : 'all');
+  const [selected, setSelected] = useState<string | null>(null);
+  const detail = useRef<HTMLDivElement>(null);
+  if (!rows.length) {
     return (
       <p className="body-sm muted">
         This trial did not compare codecs. Switch on “Compare codecs for the largest columns” when you set up a trial to see, per column, which codec is
@@ -38,175 +36,149 @@ export function TrialCodecs({ trial, result: r }: { trial: Trial; result: TrialR
       </p>
     );
   }
-  const rows = columns.map((c) => ({ c, ...sizes(c) }));
-  const changes = rows.filter((x) => x.change);
-  const saved = changes.reduce((a, x) => a + x.saved, 0);
-  const todayTotal = rows.reduce((a, x) => a + (x.today?.compressedBytes ?? 0), 0);
-  const scale = r.rows > 0 ? r.totalRows / r.rows : 1;
-  const order = [orderOf(r.baseDdl), orderOf(r.candDdl)];
-  const table = `${quote(trial.database)}.${quote(trial.table)}`;
-  const sql = changes
-    .map(({ c }) => `ALTER TABLE ${table}\n  MODIFY COLUMN ${quote(c.name)} ${c.best ? `CODEC(${c.best})` : 'REMOVE CODEC'};`)
-    .join('\n');
-
-  return (
-    <>
-      <section aria-label="Codec comparison" className="grid-auto" style={vars({ min: 200 })}>
-        <div className="tile">
-          <span className="caption muted">Columns compared</span>
-          <span className="headline">{fmtInt(columns.length)}</span>
-          <span className="caption muted g-num">the largest, {fmtInt(columns.reduce((a, c) => a + c.variants.length, 0))} codec variants</span>
-        </div>
-        <div className="tile">
-          <span className="caption muted">Better codec found</span>
-          <span className="headline">{fmtInt(changes.length)}</span>
-          <span className="caption muted g-num">at least {fmtPct(WORTH, 0)} smaller than today's</span>
-        </div>
-        <div className="tile">
-          <span className="caption muted">Saving on the sample</span>
-          <span className="headline">{fmtBytes(saved)}</span>
-          <span className="caption muted g-num">{todayTotal > 0 ? `${fmtPct(saved / todayTotal, 0)} of these columns` : '—'}</span>
-        </div>
-        <div className="tile">
-          <span className="caption muted">Projected for the table</span>
-          <span className="headline">{fmtBytes(saved * scale)}</span>
-          <span className="caption muted g-num">{fmtRows(r.totalRows)} rows, scaled from the sample</span>
-        </div>
-      </section>
-
-      <p className="caption muted">
-        Every variant holds the same {fmtRows(r.rows)} rows, stored in the candidate's order <span className="g-mono">{order[1]}</span>. A codec is only as
-        good as its fit to the values and to the order they lie in, so each one was built and weighed.
-        {order[0] !== order[1] ? ' This trial changes the sorting key: under today’s key the ranking can come out differently.' : ''}
-      </p>
-
-      <section className="stack">
-        <h2 className="card-title">Codec per column</h2>
-        <Card table>
-          <table className="g-tbl g-acc">
-            <thead>
-              <tr>
-                <th>Column</th>
-                <th>Type</th>
-                <th>Codec today</th>
-                <th>Best measured</th>
-                <th className="r">Size today → best</th>
-                <th style={{ width: '16%' }}>Saving</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ c, today, best, share, change }) => {
-                const shown = open === c.name;
-                const id = `codec-${c.name}`;
-                return (
-                  <Fragment key={c.name}>
-                    <tr className={`g-acc__row${shown ? ' is-open' : ''}`} onClick={() => setOpen(shown ? null : c.name)}>
-                      <td>
-                        <RowButton open={shown} controls={id}>
-                          {c.name}
-                        </RowButton>
-                      </td>
-                      <td className="g-mono">{c.type}</td>
-                      <td className="g-mono">{label(c.production, c.defaultIs)}</td>
-                      <td className={`g-mono${change ? ' ink' : ''}`} style={change ? { fontWeight: 700 } : undefined}>
-                        {change ? label(c.best, c.defaultIs) : 'keep'}
-                      </td>
-                      <td className="r nowrap">
-                        {today ? fmtBytes(today.compressedBytes) : '—'} → <span className="g-strong ink">{best ? fmtBytes(best.compressedBytes) : '—'}</span>
-                      </td>
-                      <td>
-                        {change ? (
-                          <div className="share">
-                            <div className="g-track">
-                              <div className="g-fill" style={{ width: `${Math.min(100, share * 100)}%` }} />
-                            </div>
-                            <span className="g-num ink" style={{ width: 40, textAlign: 'right' }}>
-                              −{fmtPct(share, 0)}
-                            </span>
-                          </div>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                    </tr>
-                    {shown ? (
-                      <tr className="g-acc__panel">
-                        <td colSpan={6} id={id}>
-                          <Variants column={c} />
-                        </td>
-                      </tr>
-                    ) : null}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </Card>
-        <p className="caption muted">
-          “Best measured” is the cheapest codec to read back among those within {fmtPct(WORTH, 0)} of the smallest; the codec in place stays when it is one
-          of them. Open a column to see every variant.
-        </p>
-      </section>
-
-      {sql ? (
-        <section className="stack" style={vars({ gap: 12 })}>
-          <h2 className="card-title" style={{ overflowWrap: 'anywhere' }}>
-            Statements for {trial.database}.{trial.table}
-          </h2>
-          <p className="body-sm muted">
-            Changing a codec only touches metadata. New parts use it at once, existing parts as they merge, and OPTIMIZE … FINAL rewrites them right away.
-            Granulee does not run these.
-          </p>
-          <CodeBlock code={sql} copyLabel="Copy SQL" />
-        </section>
-      ) : (
-        <p className="body-sm muted">No column has a codec that is at least {fmtPct(WORTH, 0)} smaller than the one it uses today.</p>
-      )}
-    </>
-  );
-}
-
-/** Every codec tried for one column, smallest first, the pick drawn in colour. */
-function Variants({ column: c }: { column: CodecColumn }) {
+  const shown = filter === 'better' ? better : rows;
+  const picked = rows.find((x) => x.column.name === selected) ?? shown[0] ?? rows[0];
+  const c = picked.column;
+  const variants = rows.reduce((a, x) => a + x.column.variants.length, 0);
+  const maxSaved = Math.max(...better.map((x) => x.saved), 1);
   const largest = Math.max(...c.variants.map((v) => v.compressedBytes), 1);
   const timed = c.variants.some((v) => v.scanMs != null);
+  const taken = better.filter((x) => picks[x.column.name]);
+  const newOrder = clauseOf(r.baseDdl, 'ORDER BY') !== clauseOf(r.candDdl, 'ORDER BY');
+  const table = `${quote(trial.database)}.${quote(trial.table)}`;
+  const sql = taken.map(({ column: k }) => `ALTER TABLE ${table}\n  MODIFY COLUMN ${quote(k.name)} ${k.best ? `CODEC(${k.best})` : 'REMOVE CODEC'};`).join('\n');
+  const followUp =
+    routes.newTrial(trial.sourceId, trial.database, trial.table) +
+    `&from=${encodeURIComponent(trial.id)}&codecs=${encodeURIComponent(JSON.stringify(Object.fromEntries(taken.map((x) => [x.column.name, x.column.best]))))}`;
+  const pick = (name: string) => {
+    setSelected(name);
+    requestAnimationFrame(() => {
+      const box = detail.current?.getBoundingClientRect();
+      if (box && (box.top > window.innerHeight * 0.7 || box.bottom < 0)) detail.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+  };
+
   return (
-    <div className="stack" style={vars({ gap: 8 })}>
-      <div className="q-codecs">
-        {c.variants.map((v) => {
-          const tags = [v.codec === c.best ? 'pick' : null, v.codec === c.production ? 'today' : null, v.codec === c.candidate && c.candidate !== c.production ? 'candidate' : null].filter(Boolean);
-          return (
-            <div
-              key={v.codec}
-              className="q-codecs__row"
-              title={`${label(v.codec, c.defaultIs)}: ${fmtBytes(v.compressedBytes)}, ratio ${fmtRatio(v.uncompressedBytes, v.compressedBytes)}${v.scanMs != null ? `, full read ${fmtMs(v.scanMs)}` : ''}`}
-            >
-              <span className="g-mono g-wrap">
-                <span className={v.codec === c.best ? 'ink' : undefined} style={v.codec === c.best ? { fontWeight: 700 } : undefined}>
-                  {label(v.codec, c.defaultIs)}
-                </span>
-                {tags.length ? <span className="muted"> · {tags.join(', ')}</span> : null}
-              </span>
-              <span className="q-codecs__bars">
-                <span className={`q-codecs__bar${v.codec === c.best ? ' q-codecs__bar--pick' : ''}`} style={{ width: `${(v.compressedBytes / largest) * 100}%` }} />
-              </span>
-              <span className="caption g-num q-codecs__value">
-                <span className="ink" style={{ fontWeight: 700 }}>
-                  {fmtBytes(v.compressedBytes)}
-                </span>{' '}
-                <span className="muted">
-                  · {fmtRatio(v.uncompressedBytes, v.compressedBytes)}
-                  {timed ? ` · ${v.scanMs != null ? `read ${fmtMs(v.scanMs)}` : 'not timed'}` : ''}
-                </span>
-              </span>
-            </div>
-          );
-        })}
+    <section className="stack">
+      <div className="tg-bar" style={{ alignItems: 'baseline' }}>
+        <h2 className="card-title">Codecs worth a follow-up</h2>
+        <span className="caption muted">
+          {fmtInt(variants)} variants built for the {fmtInt(rows.length)} largest columns, on the same rows in the candidate's order. Largest saving first.
+          {newOrder ? ' This trial changes the sorting key: under today’s key the ranking can come out differently.' : ''}
+        </span>
       </div>
-      <p className="caption muted">
-        Compressed size on the sample, then the compression ratio{timed ? ' and the median time of a full read of the column' : ''}.
-        {timed ? ' Only variants close to the smallest, and the one in use, were timed.' : ''}
-      </p>
-    </div>
+      <div role="group" aria-label="Which columns to show" className="row">
+        <Choice pressed={filter === 'better'} onClick={() => setFilter('better')}>
+          Better found {fmtInt(better.length)}
+        </Choice>
+        <Choice pressed={filter === 'all'} onClick={() => setFilter('all')}>
+          All {fmtInt(rows.length)}
+        </Choice>
+      </div>
+      <div className="tg-split">
+        <div className="card tg-list">
+          <div className="eyebrow tg-list__head" aria-hidden="true">
+            <span className="tg-codec__name">Column</span>
+            <span style={{ flex: 1 }}>Today → best measured</span>
+            <span className="tg-codec__save" style={{ justifyContent: 'flex-end' }}>
+              Saving on the sample
+            </span>
+          </div>
+          {shown.map((x) => {
+            const k = x.column;
+            return (
+              <button type="button" key={k.name} className="g-rowbtn tg-pick" aria-pressed={k.name === c.name} onClick={() => pick(k.name)}>
+                <span className="tg-codec__name g-wrap">
+                  {k.name}
+                  {picks[k.name] && x.better ? (
+                    <span className="tg-codec__taken" title="Taken into the follow-up trial">
+                      {' '}
+                      ✓<span className="sr-only"> taken into the follow-up trial</span>
+                    </span>
+                  ) : null}
+                </span>
+                <span className="g-mono g-wrap" style={{ flex: 1 }}>
+                  <span className="muted">{codecLabel(k.production, k.defaultIs)} →</span> {x.better ? codecLabel(k.best, k.defaultIs) : 'keep'}
+                </span>
+                <span className="tg-codec__save">
+                  {x.better ? (
+                    <>
+                      <span className="g-track">
+                        <span aria-hidden="true" className="g-fill" style={{ display: 'block', width: `${(x.saved / maxSaved) * 100}%` }} />
+                      </span>
+                      <span className="g-num tg-codec__value">
+                        −{fmtBytes(x.saved)} · −{fmtPct(x.share, 0)}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="g-num tg-codec__value muted">—</span>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+          {!shown.length ? <p className="body-sm muted tg-list__note">No column has a codec that is clearly smaller than today's.</p> : null}
+          <p className="caption muted tg-list__note">
+            {rows.length - better.length === 0
+              ? `A smaller codec was measured for every one of the ${fmtInt(rows.length)} compared columns.`
+              : `${fmtInt(rows.length - better.length)} of the ${fmtInt(rows.length)} compared columns keep today's codec: nothing measured was at least ${fmtPct(CODEC_WORTH, 0)} smaller.`}
+          </p>
+        </div>
+        <div className="card tg-detail" aria-live="polite" ref={detail} style={{ gap: 12 }}>
+          <div className="row" style={{ alignItems: 'baseline', gap: 12 }}>
+            <span className="tg-title">{c.name}</span>
+            <span className="g-mono muted">{c.type}</span>
+          </div>
+          <span className="eyebrow">Every variant, smallest first</span>
+          {c.variants.map((v) => {
+            const isPick = v.codec === c.best;
+            const isToday = v.codec === c.production;
+            const tags = [isPick ? 'pick' : null, isToday ? 'today' : null, v.codec === c.candidate && c.candidate !== c.production ? 'candidate' : null].filter(Boolean);
+            return (
+              <div key={v.codec} className="tg-variant">
+                <span className="g-mono g-wrap tg-variant__name">
+                  {codecLabel(v.codec, c.defaultIs)} {tags.length ? <span className="muted">· {tags.join(', ')}</span> : null}
+                </span>
+                <span className="tg-variant__track">
+                  <span
+                    aria-hidden="true"
+                    className="tg-variant__bar"
+                    style={{ width: `${(v.compressedBytes / largest) * 100}%`, background: isPick ? 'var(--chart-1)' : isToday ? 'var(--chart-2)' : 'var(--chart-other)' }}
+                  />
+                </span>
+                <span className="g-num tg-variant__value">
+                  <strong>{fmtBytes(v.compressedBytes)}</strong>{' '}
+                  <span className="muted">
+                    · {fmtRatio(v.uncompressedBytes, v.compressedBytes)}
+                    {timed ? ` · ${v.scanMs != null ? `read ${fmtMs(v.scanMs)}` : 'not timed'}` : ''}
+                  </span>
+                </span>
+              </div>
+            );
+          })}
+          <p className="caption muted">
+            Size on the sample, compression ratio{timed ? ' and the median time of a full read' : ''}. The pick is the cheapest to read among those within{' '}
+            {fmtPct(CODEC_WORTH, 0)} of the smallest; the codec in place stays when it is one of them.
+          </p>
+          {picked.better ? (
+            <label className="body-sm tg-check">
+              <input type="checkbox" checked={!!picks[c.name]} onChange={(e) => onPicks({ ...picks, [c.name]: e.target.checked })} /> Take this codec into a follow-up
+              trial
+            </label>
+          ) : (
+            <p className="body-sm tg-check">Today's codec stays: nothing measured was at least {fmtPct(CODEC_WORTH, 0)} smaller.</p>
+          )}
+        </div>
+      </div>
+      <div className="row" style={{ gap: 16 }}>
+        <Button to={followUp} disabled={!taken.length}>
+          {taken.length ? `Set up a trial with ${fmtInt(taken.length)} ${taken.length === 1 ? 'pick' : 'picks'}` : 'Pick a codec first'}
+        </Button>
+        {taken.length ? <CopyButton text={sql}>Copy as ALTER statements</CopyButton> : null}
+        <span className="body-sm muted" style={{ flex: '1 1 320px' }}>
+          Codec sizes here are measured one column at a time. A follow-up trial shows what they do to inserts and queries together.
+        </span>
+      </div>
+    </section>
   );
 }

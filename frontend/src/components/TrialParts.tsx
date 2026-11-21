@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import type { Trial, TrialStep } from '../api/types';
 import { api } from '../api/client';
-import { useAction, useApi } from '../hooks/useApi';
+import { useAction } from '../hooks/useApi';
 import { fmtBytes } from '../lib/format';
 import { vars } from '../lib/style';
 import { Button } from './Button';
@@ -99,64 +99,6 @@ export function RemoveTrialDialog({ trial, onClose, onRemoved }: { trial: Trial;
 /** State holder for "which trial is being removed". */
 export function useRemoveTrial() {
   return useState<Trial | null>(null);
-}
-
-/**
- * Review before anything touches production: shows the statements computed against the table as it is now.
- * ALTERs can be run from here; a rebuild is only shown.
- */
-export function ApplyTrialDialog({ trial, onClose, onStarted }: { trial: Trial; onClose: () => void; onStarted: () => void }) {
-  const { data: plan, error } = useApi(() => api.applyPlan(trial.id), [trial.id]);
-  const apply = useAction();
-  const table = `${trial.database}.${trial.table}`;
-  const runnable = plan?.kind === 'alter';
-  return (
-    <Dialog
-      wide
-      title={`Apply to ${table}?`}
-      onClose={onClose}
-      actions={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            {runnable ? 'Cancel' : 'Close'}
-          </Button>
-          {runnable ? (
-            <Button
-              busy={apply.busy}
-              onClick={async () => {
-                if (await apply.run(() => api.applyTrial(trial.id, plan.sql))) onStarted();
-              }}
-            >
-              {plan.statements === 1 ? 'Run 1 statement' : `Run ${plan.statements} statements`}
-            </Button>
-          ) : null}
-        </>
-      }
-    >
-      {error ? <InlineError message={error} /> : null}
-      {!plan && !error ? <p className="body muted">Reading the table as it is now…</p> : null}
-      {plan?.kind === 'none' ? <p className="body muted">{table} already matches the candidate of this trial. There is nothing to run.</p> : null}
-      {plan?.kind === 'alter' ? (
-        <>
-          <p className="body muted">
-            Review what will run on {plan.sourceName}, one statement after the other, against the production table. Type changes rewrite the column in every part and can
-            take a while; a statement that has run is not undone if a later one fails.
-          </p>
-          <CodeBlock code={plan.sql} copyLabel="Copy SQL" />
-        </>
-      ) : null}
-      {plan?.kind === 'rebuild' ? (
-        <>
-          <p className="body muted">
-            This candidate changes a key, so the table has to be rebuilt. Granulee does not run that: copying every row needs writes paused and enough free disk. Run the
-            script yourself when the time is right.
-          </p>
-          <CodeBlock code={plan.sql} copyLabel="Copy SQL" />
-        </>
-      ) : null}
-      <InlineError message={apply.error} />
-    </Dialog>
-  );
 }
 
 /** Confirms OPTIMIZE … FINAL on the production table after the candidate has been applied. */
