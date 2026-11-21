@@ -1,14 +1,14 @@
-# Granulee with Docker Compose. Builds the image from this repository.
+# Granulee with Docker Compose, from the published image.
 #
-#   docker compose -f deploy/compose.yaml up -d --build
+#   docker compose -f deploy/compose.yaml up -d
+#
+# VERSION pins a release (VERSION=0.19.4); without it the newest one is used.
 #
 # Granulee has no login of its own: the port below is bound to this machine only. Put a reverse proxy
 # with authentication in front of it before you open it to anyone else. See docs/running.md.
 services:
   granulee:
-    build:
-      context: ..
-    image: granulee:latest
+    image: ghcr.io/pixelweb-org/granulee:${VERSION:-latest}
     container_name: granulee
     restart: unless-stopped
     ports:

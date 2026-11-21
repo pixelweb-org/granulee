@@ -5,27 +5,50 @@ keeps its own state as files in one directory. It needs no database of its own.
 
 ## With Docker
 
-The repository has a `Dockerfile` that builds everything from source, so Docker is all you need:
+Every release is published as an image for amd64 and arm64:
+
+```bash
+docker run -d --name granulee -p 127.0.0.1:8080:8080 -v granulee-data:/data ghcr.io/pixelweb-org/granulee:latest
+```
+
+Open http://localhost:8080 and add a server under **Data sources**. The port is bound to this machine
+only; see [Security](#security) before you change that.
+
+| Tag | What |
+| --- | --- |
+| `latest` | The newest release. |
+| `0.19.4` | That release. Pin one if you want to decide when to update. |
+| a short commit hash | The commit a release was built from. |
+
+To update, pull the new image and recreate the container. The volume keeps your sources, scans and
+trials.
+
+```bash
+docker pull ghcr.io/pixelweb-org/granulee:latest
+docker rm -f granulee
+docker run -d --name granulee -p 127.0.0.1:8080:8080 -v granulee-data:/data ghcr.io/pixelweb-org/granulee:latest
+```
+
+## With Docker Compose
+
+[`deploy/compose.yaml`](../deploy/compose.yaml) is a starting point: the published image, the data in a
+named volume, a health check, the port bound to this machine.
+
+```bash
+docker compose -f deploy/compose.yaml up -d
+```
+
+`VERSION=0.19.4 docker compose …` pins a release.
+
+## From a checkout
+
+The repository has a `Dockerfile` that builds everything from source with nothing but Docker:
 
 ```bash
 git clone https://github.com/pixelweb-org/granulee.git
 cd granulee
 docker build -t granulee .
-docker run -d --name granulee -p 8080:8080 -v granulee-data:/data granulee
-```
-
-Open http://localhost:8080 and add a server under **Data sources**.
-
-To update, pull the repository, build again and recreate the container. The volume keeps your sources,
-scans and trials.
-
-## With Docker Compose
-
-[`deploy/compose.yaml`](../deploy/compose.yaml) is a starting point: it builds the image from the
-repository, keeps the data in a named volume and has a health check.
-
-```bash
-docker compose -f deploy/compose.yaml up -d --build
+docker run -d --name granulee -p 127.0.0.1:8080:8080 -v granulee-data:/data granulee
 ```
 
 ## As a jar

@@ -1,7 +1,9 @@
 name: Build image
 
 # Tests every push to main. On a vX.Y.Z tag (release-please dispatches this workflow for each release)
-# it also builds the image with Jib and pushes it to the registry.
+# it also builds the image with Jib and pushes it twice: to the project's own registry from its own
+# runner, and to ghcr.io, the public one, from a GitHub-hosted runner. The two jobs do not depend on each
+# other, so a registry that is down does not hold back the other image.
 on:
   push:
     branches: [main]
@@ -81,4 +83,50 @@ jobs:
             echo "### Image pushed"
             echo ""
             for t in ${tags//,/ }; do echo "- \`$IMAGE:$t\`"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The public image: ghcr.io/pixelweb-org/granulee for amd64 and arm64. Built from the tagged source on a
+  # GitHub-hosted runner, so it does not depend on the project's own server, and pushed with the workflow's
+  # own token, so there is no credential to keep.
+  ghcr:
+    if: github.repository == 'pixelweb-org/granulee' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # `build` runs the tests first: nothing is pushed from a tag whose tests fail on this runner.
+      - name: Test, build and push to ghcr.io
+        working-directory: backend
+        env:
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY}"
+          tags="latest,${GITHUB_REF_NAME#v},${GITHUB_SHA::7}"
+          ./gradlew build jib -PwithFrontend --stacktrace \
+            -Djib.console=plain \
+            -Djib.to.image="$image" \
+            -Djib.to.tags="$tags" \
+            -Djib.from.platforms=linux/amd64,linux/arm64
+          {
+            echo "### Image pushed to ghcr.io"
+            echo ""
+            for t in ${tags//,/ }; do echo "- \`$image:$t\`"; done
           } >> "$GITHUB_STEP_SUMMARY"
