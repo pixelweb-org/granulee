@@ -83,6 +83,24 @@ class MigrationSqlTest {
     }
 
     @Test
+    fun `a rebuild keeps the projections, a trial table has none`() {
+        val table = live.copy(
+            projections = listOf(
+                ProjectionFacts("per_country", "SELECT country, count() GROUP BY country"),
+                ProjectionFacts("by_time", "SELECT * ORDER BY event_time", mapOf("index_granularity" to "4096")),
+                ProjectionFacts("old_one", ""),
+            ),
+        )
+        val sql = migrationSql("analytics", "events", table, request(sortingKey = "(event_time, user_id)"))
+        assertTrue("    PROJECTION `per_country` (SELECT country, count() GROUP BY country),\n" in sql, sql)
+        assertTrue("    PROJECTION `by_time` (SELECT * ORDER BY event_time) WITH SETTINGS (index_granularity = 4096)\n)" in sql, sql)
+        assertTrue("-- The new table gets the 2 projections of the old one" in sql, sql)
+        assertTrue("-- Projection old_one is missing below" in sql, sql)
+        assertFalse("PROJECTION `old_one`" in sql, sql)
+        assertFalse("PROJECTION" in createSql("`scratch`.`t`", table, null, "MergeTree", ""))
+    }
+
+    @Test
     fun `a key column that changes type is a rebuild`() {
         val out = sql(request(columns = arrayOf(TrialColumn("user_id", "UInt32", ""))))
         assertTrue(out.contains("user_id is a key column and changes its type"), out)

@@ -35,7 +35,11 @@ internal data class LiveTable(
     val compressedBytes: Long,
     val columns: List<ColumnFacts>,
     val indexes: List<IndexFacts>,
+    val projections: List<ProjectionFacts> = emptyList(),
 )
+
+/** A projection as a rebuild has to recreate it. `query` is empty where the server does not tell its definition. */
+internal data class ProjectionFacts(val name: String, val query: String, val settings: Map<String, String> = emptyMap())
 
 private data class Sizes(
     val rows: Long,
@@ -74,7 +78,9 @@ internal fun hasDynamicSubcolumns(type: String): Boolean =
 private val FEW_FILES = mapOf("max_threads" to "2", "max_insert_threads" to "1")
 
 /** CREATE TABLE with the production columns, and the request's changes if given. */
-internal fun createSql(target: String, live: LiveTable, request: TrialRequest?, engine: String, tail: String): String {
+internal fun createSql(
+    target: String, live: LiveTable, request: TrialRequest?, engine: String, tail: String, withProjections: Boolean = false,
+): String {
     val overrides = request?.columns?.associateBy { it.name }.orEmpty()
     val columns = live.columns.map { c ->
         val o = overrides[c.name]
@@ -93,11 +99,12 @@ internal fun createSql(target: String, live: LiveTable, request: TrialRequest?, 
             val expression = if (splitTopLevel(it.expression).size > 1) "(${it.expression})" else it.expression
             "    INDEX ${Sql.id(it.name)} $expression TYPE ${it.type} GRANULARITY ${it.granularity}"
         }
+    val projections = if (withProjections) live.projections.filter { it.query.isNotBlank() }.map { "    ${projectionSql(it)}" } else emptyList()
     val partitionKey = request?.partitionKey ?: live.partitionKey
     val sortingKey = normalizeKey(request?.sortingKey ?: live.sortingKey)
     return buildString {
         append("CREATE TABLE $target\n(\n")
-        append((columns + indexes + added).joinToString(",\n"))
+        append((columns + indexes + added + projections).joinToString(",\n"))
         append("\n)\nENGINE = $engine\n")
         if (partitionKey.isNotBlank()) append("PARTITION BY $partitionKey\n")
         if (live.primaryKey.isNotBlank() && !sameText(live.primaryKey, live.sortingKey) && sameText(sortingKey, normalizeKey(live.sortingKey))) {
@@ -112,6 +119,12 @@ internal fun createSql(target: String, live: LiveTable, request: TrialRequest?, 
 internal fun indexSql(index: TrialIndex): String {
     val expression = if (splitTopLevel(index.expression).size > 1) "(${index.expression.trim()})" else index.expression.trim()
     return "INDEX ${Sql.id(index.name.trim())} $expression TYPE ${index.type.trim()} GRANULARITY ${index.granularity.coerceAtLeast(1)}"
+}
+
+/** PROJECTION … as it stands in CREATE TABLE. */
+internal fun projectionSql(projection: ProjectionFacts): String {
+    val settings = projection.settings.entries.joinToString(", ") { "${it.key} = ${it.value}" }
+    return "PROJECTION ${Sql.id(projection.name)} (${projection.query.trim()})" + if (settings.isEmpty()) "" else " WITH SETTINGS ($settings)"
 }
 
 /** A trial table: plain MergeTree. Wide parts only, because compact parts keep all columns in one file and per-column sizes would read as zero. */
@@ -170,7 +183,15 @@ internal fun migration(database: String, table: String, live: LiveTable, request
             append("-- ALTER TABLE cannot do this in place: ${rebuild.joinToString(", ")}.\n")
             append("-- The table is rebuilt instead. Pause writes while the rows are copied, or backfill them afterwards.\n")
             if (engine.startsWith("Replicated")) append("-- Replicated table: give the new table its own ZooKeeper path.\n")
-            append(createSql(fresh, live, request, engine, Analyzer.engineTail(live.engineFull)))
+            val (known, unknown) = live.projections.partition { it.query.isNotBlank() }
+            if (known.isNotEmpty()) {
+                append("-- The new table gets the ${if (known.size == 1) "projection" else "${known.size} projections"} of the old one; ")
+                append("${if (known.size == 1) "it is" else "they are"} built as the rows are copied.\n")
+            }
+            unknown.forEach {
+                append("-- Projection ${it.name} is missing below: this server does not tell its definition. Add it to the CREATE TABLE by hand.\n")
+            }
+            append(createSql(fresh, live, request, engine, Analyzer.engineTail(live.engineFull), withProjections = true))
             append(";\n\nINSERT INTO $fresh (${copied.joinToString(", ") { Sql.id(it.name) }})\nSELECT ")
             append(copied.joinToString(", ") { copyExpression(it, overrides[it.name]?.type?.ifBlank { null }) })
             append("\nFROM $name;\n\nEXCHANGE TABLES $name AND $fresh;\n\n")
@@ -809,7 +830,24 @@ class TrialService(
             compressedBytes = size.long("compressed"),
             columns = columns,
             indexes = indexes,
+            projections = projectionFacts(ch, where),
         )
+    }
+
+    /** The table's projections with their definitions; only the names where the server has no system.projections. */
+    private fun projectionFacts(ch: ChConnection, where: String): List<ProjectionFacts> = try {
+        // SELECT *: the settings column exists only on newer servers.
+        ch.query("SELECT * FROM system.projections WHERE $where ORDER BY name").map { row ->
+            val settings = (row["settings"] as? Map<*, *>).orEmpty().entries.associate { it.key.toString() to it.value.toString() }
+            ProjectionFacts(row.str("name"), row.str("query"), settings)
+        }
+    } catch (e: Exception) {
+        log.info("system.projections is not readable: {}", e.message)
+        try {
+            ch.query("SELECT DISTINCT name FROM system.projection_parts WHERE active AND $where ORDER BY name").map { ProjectionFacts(it.str("name"), "") }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     private fun sampleFilter(ch: ChConnection, trial: Trial, live: LiveTable): String {
