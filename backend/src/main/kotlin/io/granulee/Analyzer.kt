@@ -27,7 +27,14 @@ data class IndexFacts(
     val uncompressedBytes: Long,
 )
 
-data class QueryFacts(val query: String, val normalized: String, val count: Long)
+data class QueryFacts(
+    val query: String,
+    val normalized: String,
+    val count: Long,
+    // Column → how the query filters on it ("eq", "range", "has", "like", "other"), from ClickHouse's own analysis
+    // of the query. Null where the scan could not get one; then the query text has to do.
+    val filters: Map<String, Set<String>>? = null,
+)
 
 /**
  * How many files a table is on disk, estimated from system.parts_columns: a wide part keeps two files per
@@ -150,6 +157,15 @@ fun filterText(query: String): String {
     return if (at == null) "" else query.substring(at)
 }
 
+/** The analysed filters on a column, with its subcolumns: a test for NULL reads `column.null`. */
+private fun Map<String, Set<String>>.of(column: String): List<Set<String>> = filterKeys { it == column || it.startsWith("$column.") }.values.toList()
+
+/** Whether the query filters on the column: by ClickHouse's analysis where the scan has it, by the text otherwise. */
+fun QueryFacts.filtersOn(column: String): Boolean = filters?.of(column)?.isNotEmpty() ?: mentions(filterText(normalized), column)
+
+/** How the query filters on the column: "eq", "range", "has". */
+fun QueryFacts.predicatesOn(column: String): Set<String> = filters?.of(column)?.flatten()?.toSet() ?: Analyzer.predicates(filterText(normalized), column)
+
 /**
  * The rules. Each one looks at sizes, types, codecs and keys from system tables, plus the most
  * frequent SELECTs from query_log. Savings are estimates until a trial measures them.
@@ -268,9 +284,8 @@ object Analyzer {
         if (total < 20 || t.queries.isEmpty()) return null
         val keyParts = splitTopLevel(t.sortingKey)
         val first = keyParts.firstOrNull() ?: return null
-        val wheres = t.queries.map { q -> filterText(q.normalized) to q }
         fun share(column: String): Double =
-            wheres.filter { mentions(it.first, column) }.sumOf { it.second.count }.toDouble() / total
+            t.queries.filter { it.filtersOn(column) }.sumOf { it.count }.toDouble() / total
         val firstColumns = t.columns.filter { mentions(first, it.name) }.map { it.name }
         val firstShare = firstColumns.maxOfOrNull(::share) ?: 0.0
         if (firstShare >= 0.3) return null
@@ -291,8 +306,8 @@ object Analyzer {
         val (column, columnShare) = best
         val rest = keyParts.filter { it != column.name }
         val newKey = (listOf(column.name) + rest).joinToString(", ")
-        val evidence = wheres.filter { mentions(it.first, column.name) }
-            .map { QueryEvidence(it.second.normalized, it.second.count, it.second.count.toDouble() / total) }
+        val evidence = t.queries.filter { it.filtersOn(column.name) }
+            .map { QueryEvidence(it.normalized, it.count, it.count.toDouble() / total) }
         return Finding(
             Recommendation(
                 id = "sorting-key",
@@ -466,14 +481,13 @@ object Analyzer {
     private fun newSkipIndexes(t: TableFacts, windowDays: Int, keyColumn: String?): List<Finding> {
         val total = t.queryTotal ?: return emptyList()
         if (total < 20 || t.queries.isEmpty()) return emptyList()
-        val filters = t.queries.map { filterText(it.normalized) to it }
         return t.columns
             .filter { !it.inSortingKey && it.defaultKind != "ALIAS" && it.name != keyColumn && t.indexes.none { index -> mentions(index.expression, it.name) } }
             .mapNotNull { c ->
-                val using = filters.filter { mentions(it.first, c.name) }
-                val share = using.sumOf { it.second.count }.toDouble() / total
+                val using = t.queries.filter { it.filtersOn(c.name) }
+                val share = using.sumOf { it.count }.toDouble() / total
                 if (share < 0.1) return@mapNotNull null
-                val type = skipIndexType(c, using.flatMap { predicates(it.first, c.name) }.toSet()) ?: return@mapNotNull null
+                val type = skipIndexType(c, using.flatMap { it.predicatesOn(c.name) }.toSet()) ?: return@mapNotNull null
                 Triple(c, share, type) to using
             }
             .sortedByDescending { it.first.second }
@@ -497,7 +511,7 @@ object Analyzer {
                         sql = "ALTER TABLE $table\n  ADD ${indexSql(index)};\nALTER TABLE $table\n  MATERIALIZE INDEX ${Sql.id(index.name)};",
                         savingsBytes = 0,
                         column = c.name,
-                        queries = using.map { QueryEvidence(it.second.normalized, it.second.count, it.second.count.toDouble() / total) },
+                        queries = using.map { QueryEvidence(it.normalized, it.count, it.count.toDouble() / total) },
                     ),
                     TrialPlanRecommendation("add-index:${c.name}", "Add ${type.substringBefore('(')} index on ${c.name}", addIndex = index),
                 )

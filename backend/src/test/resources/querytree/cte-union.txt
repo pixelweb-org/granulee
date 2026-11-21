@@ -1,0 +1,52 @@
+UNION id: 0, union_mode: UNION_ALL
+  QUERIES
+    LIST id: 1, nodes: 2
+      QUERY id: 2, alias: __table1
+        PROJECTION COLUMNS
+          count() UInt64
+        PROJECTION
+          LIST id: 3, nodes: 1
+            FUNCTION id: 4, function_name: count, function_type: aggregate, result_type: UInt64
+        JOIN TREE
+          QUERY id: 5, alias: __table2, is_subquery: 1, is_cte: 1, cte_name: recent
+            PROJECTION COLUMNS
+              country Nullable(String)
+            PROJECTION
+              LIST id: 6, nodes: 1
+                COLUMN id: 7, column_name: country, result_type: Nullable(String), source_id: 8
+            JOIN TREE
+              TABLE id: 8, alias: __table3, table_name: analytics.events
+            WHERE
+              FUNCTION id: 9, function_name: greater, function_type: ordinary, result_type: UInt8
+                ARGUMENTS
+                  LIST id: 10, nodes: 2
+                    COLUMN id: 11, column_name: event_time, result_type: DateTime, source_id: 8
+                    CONSTANT id: 12, constant_value: UInt64_1795236829, constant_value_type: DateTime
+                      EXPRESSION
+                        FUNCTION id: 13, function_name: minus, function_type: ordinary, result_type: DateTime
+                          ARGUMENTS
+                            LIST id: 14, nodes: 2
+                              CONSTANT id: 15, constant_value: UInt64_1795240429, constant_value_type: DateTime
+                                EXPRESSION
+                                  FUNCTION id: 16, function_name: now, function_type: ordinary, result_type: DateTime
+                              CONSTANT id: 17, constant_value: UInt64_3600, constant_value_type: UInt16
+        WHERE
+          FUNCTION id: 18, function_name: equals, function_type: ordinary, result_type: Nullable(UInt8)
+            ARGUMENTS
+              LIST id: 19, nodes: 2
+                COLUMN id: 20, column_name: country, result_type: Nullable(String), source_id: 5
+                CONSTANT id: 21, constant_value: 'DE', constant_value_type: String
+      QUERY id: 22, alias: __table4
+        PROJECTION COLUMNS
+          count() UInt64
+        PROJECTION
+          LIST id: 23, nodes: 1
+            FUNCTION id: 24, function_name: count, function_type: aggregate, result_type: UInt64
+        JOIN TREE
+          TABLE id: 25, alias: __table5, table_name: analytics.events
+        WHERE
+          FUNCTION id: 26, function_name: greater, function_type: ordinary, result_type: Nullable(UInt8)
+            ARGUMENTS
+              LIST id: 27, nodes: 2
+                COLUMN id: 28, column_name: revenue, result_type: Nullable(Float64), source_id: 25
+                CONSTANT id: 29, constant_value: UInt64_5, constant_value_type: UInt8

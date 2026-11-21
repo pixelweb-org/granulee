@@ -1,0 +1,43 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    c UInt64
+  PROJECTION
+    LIST id: 1, nodes: 1
+      FUNCTION id: 2, function_name: count, function_type: aggregate, result_type: UInt64
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: analytics.events
+  WHERE
+    FUNCTION id: 4, function_name: and, function_type: ordinary, result_type: UInt8
+      ARGUMENTS
+        LIST id: 5, nodes: 3
+          FUNCTION id: 6, function_name: and, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 7, nodes: 2
+                FUNCTION id: 8, function_name: greaterOrEquals, function_type: ordinary, result_type: UInt8
+                  ARGUMENTS
+                    LIST id: 9, nodes: 2
+                      COLUMN id: 10, column_name: event_time, result_type: DateTime, source_id: 3
+                      CONSTANT id: 11, constant_value: '2026-11-21 00:00:00', constant_value_type: String
+                FUNCTION id: 12, function_name: less, function_type: ordinary, result_type: UInt8
+                  ARGUMENTS
+                    LIST id: 13, nodes: 2
+                      COLUMN id: 10, column_name: event_time, result_type: DateTime, source_id: 3
+                      CONSTANT id: 14, constant_value: '2026-11-22 00:00:00', constant_value_type: String
+          FUNCTION id: 15, function_name: in, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 16, nodes: 2
+                COLUMN id: 17, column_name: event_type, result_type: String, source_id: 3
+                CONSTANT id: 18, constant_value: Tuple_('a', 'b'), constant_value_type: Tuple(String, String)
+          FUNCTION id: 19, function_name: and, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 20, nodes: 2
+                FUNCTION id: 21, function_name: greaterOrEquals, function_type: ordinary, result_type: UInt8
+                  ARGUMENTS
+                    LIST id: 22, nodes: 2
+                      COLUMN id: 23, column_name: duration_ms, result_type: Int64, source_id: 3
+                      CONSTANT id: 24, constant_value: UInt64_1, constant_value_type: UInt8
+                FUNCTION id: 25, function_name: lessOrEquals, function_type: ordinary, result_type: UInt8
+                  ARGUMENTS
+                    LIST id: 26, nodes: 2
+                      COLUMN id: 23, column_name: duration_ms, result_type: Int64, source_id: 3
+                      CONSTANT id: 27, constant_value: UInt64_5, constant_value_type: UInt8

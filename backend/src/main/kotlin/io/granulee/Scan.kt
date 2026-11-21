@@ -88,6 +88,9 @@ data class HistoryFile(val points: List<HistoryPoint> = emptyList())
 
 private const val SYSTEM_DATABASES = "'system', 'INFORMATION_SCHEMA', 'information_schema'"
 
+// How long one scan may spend asking the server to analyse logged queries; the rest is read by their text.
+private const val ANALYSE_BUDGET_NS = 60_000_000_000L
+
 @Component
 class ScanService(
     private val sources: SourceService,
@@ -281,10 +284,19 @@ class ScanService(
         }
         val files = fileFacts(ch, "database NOT IN ($SYSTEM_DATABASES)")
 
+        // Ask the server how it reads each logged shape: which columns of which table the filters are on.
+        // A query that touches several tables is analysed once. The whole pass has a time budget.
+        val analysed = HashMap<String, Map<String, Map<String, Set<String>>>?>()
+        val analyseUntil = System.nanoTime() + ANALYSE_BUDGET_NS
+        fun withFilters(table: String, shapes: List<QueryFacts>): List<QueryFacts> = shapes.map { q ->
+            val all = analysed[q.query] ?: if (q.query in analysed || System.nanoTime() > analyseUntil) null else QueryTree.analyse(ch, q.query).also { analysed[q.query] = it }
+            q.copy(filters = QueryTree.on(all, listOf(table) + buffers[table].orEmpty()))
+        }
+
         val facts = tables.map { row ->
             val key = row.str("database") to row.str("name")
             val size = parts[key]
-            val queries = queryLog?.get("${key.first}.${key.second}")
+            val queries = queryLog?.get("${key.first}.${key.second}")?.let { withFilters("${key.first}.${key.second}", it.first) to it.second }
             val table = TableFacts(
                 database = key.first,
                 name = key.second,
@@ -314,6 +326,9 @@ class ScanService(
             )
         }.sortedByDescending { it.compressedBytes }
 
+        if (analysed.isNotEmpty()) {
+            log.info("{}: ClickHouse analysed {} of {} logged query shapes", source.name, analysed.values.count { it != null }, analysed.size)
+        }
         return Snapshot(
             sourceId = source.id,
             scannedAt = started.toString(),

@@ -1,0 +1,36 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    count() UInt64
+  PROJECTION
+    LIST id: 1, nodes: 1
+      FUNCTION id: 2, function_name: count, function_type: aggregate, result_type: UInt64
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: analytics.events
+  WHERE
+    FUNCTION id: 4, function_name: and, function_type: ordinary, result_type: UInt8
+      ARGUMENTS
+        LIST id: 5, nodes: 3
+          FUNCTION id: 6, function_name: has, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 7, nodes: 2
+                CONSTANT id: 8, constant_value: Array_['a'], constant_value_type: Array(String)
+                COLUMN id: 9, column_name: event_type, result_type: String, source_id: 3
+          FUNCTION id: 10, function_name: equals, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 11, nodes: 2
+                FUNCTION id: 12, function_name: toDate, function_type: ordinary, result_type: Date
+                  ARGUMENTS
+                    LIST id: 13, nodes: 1
+                      COLUMN id: 14, column_name: event_time, result_type: DateTime, source_id: 3
+                CONSTANT id: 15, constant_value: UInt64_20778, constant_value_type: Date
+                  EXPRESSION
+                    FUNCTION id: 16, function_name: today, function_type: ordinary, result_type: Date
+          FUNCTION id: 17, function_name: hasAny, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 18, nodes: 2
+                FUNCTION id: 19, function_name: splitByChar, function_type: ordinary, result_type: Array(String)
+                  ARGUMENTS
+                    LIST id: 20, nodes: 2
+                      CONSTANT id: 21, constant_value: '/', constant_value_type: String
+                      COLUMN id: 22, column_name: url, result_type: String, source_id: 3
+                CONSTANT id: 23, constant_value: Array_['p'], constant_value_type: Array(String)

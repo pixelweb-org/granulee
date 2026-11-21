@@ -1,0 +1,40 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    count() UInt64
+  PROJECTION
+    LIST id: 1, nodes: 1
+      FUNCTION id: 2, function_name: count, function_type: aggregate, result_type: UInt64
+  JOIN TREE
+    QUERY id: 3, alias: __table1, is_subquery: 1
+      PROJECTION COLUMNS
+        d Int64
+        lc Nullable(String)
+      PROJECTION
+        LIST id: 4, nodes: 2
+          COLUMN id: 5, column_name: duration_ms, result_type: Int64, source_id: 6
+          FUNCTION id: 7, function_name: lower, function_type: ordinary, result_type: Nullable(String)
+            ARGUMENTS
+              LIST id: 8, nodes: 1
+                COLUMN id: 9, column_name: country, result_type: Nullable(String), source_id: 6
+      JOIN TREE
+        TABLE id: 6, alias: __table2, table_name: analytics.events
+      WHERE
+        FUNCTION id: 10, function_name: equals, function_type: ordinary, result_type: Nullable(UInt8)
+          ARGUMENTS
+            LIST id: 11, nodes: 2
+              COLUMN id: 9, column_name: country, result_type: Nullable(String), source_id: 6
+              CONSTANT id: 12, constant_value: 'DE', constant_value_type: String
+  WHERE
+    FUNCTION id: 13, function_name: and, function_type: ordinary, result_type: Nullable(UInt8)
+      ARGUMENTS
+        LIST id: 14, nodes: 2
+          FUNCTION id: 15, function_name: greater, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 16, nodes: 2
+                COLUMN id: 17, column_name: d, result_type: Int64, source_id: 3
+                CONSTANT id: 18, constant_value: UInt64_10, constant_value_type: UInt8
+          FUNCTION id: 19, function_name: equals, function_type: ordinary, result_type: Nullable(UInt8)
+            ARGUMENTS
+              LIST id: 20, nodes: 2
+                COLUMN id: 21, column_name: lc, result_type: Nullable(String), source_id: 3
+                CONSTANT id: 22, constant_value: 'de', constant_value_type: String

@@ -1,0 +1,41 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    count() UInt64
+  PROJECTION
+    LIST id: 1, nodes: 1
+      FUNCTION id: 2, function_name: count, function_type: aggregate, result_type: UInt64
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: analytics.events
+  WHERE
+    FUNCTION id: 4, function_name: in, function_type: ordinary, result_type: UInt8
+      ARGUMENTS
+        LIST id: 5, nodes: 2
+          COLUMN id: 6, column_name: user_id, result_type: UInt64, source_id: 3
+          QUERY id: 7, is_subquery: 1
+            PROJECTION COLUMNS
+              user_id UInt64
+            PROJECTION
+              LIST id: 8, nodes: 1
+                COLUMN id: 9, column_name: user_id, result_type: UInt64, source_id: 10
+            JOIN TREE
+              TABLE id: 10, alias: __table1, table_name: analytics.users
+            WHERE
+              FUNCTION id: 11, function_name: equals, function_type: ordinary, result_type: LowCardinality(UInt8)
+                ARGUMENTS
+                  LIST id: 12, nodes: 2
+                    COLUMN id: 13, column_name: plan, result_type: LowCardinality(String), source_id: 10
+                    CONSTANT id: 14, constant_value: 'pro', constant_value_type: String
+  GROUP BY
+    LIST id: 15, nodes: 1
+      COLUMN id: 16, column_name: country, result_type: Nullable(String), source_id: 3
+  HAVING
+    FUNCTION id: 17, function_name: greater, function_type: ordinary, result_type: UInt8
+      ARGUMENTS
+        LIST id: 18, nodes: 2
+          FUNCTION id: 19, function_name: count, function_type: aggregate, result_type: UInt64
+          CONSTANT id: 20, constant_value: UInt64_1, constant_value_type: UInt8
+  ORDER BY
+    LIST id: 21, nodes: 1
+      SORT id: 22, sort_direction: ASCENDING, with_fill: 0
+        EXPRESSION country
+          COLUMN id: 16, column_name: country, result_type: Nullable(String), source_id: 3

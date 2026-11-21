@@ -7,6 +7,11 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
   `system.query_log`). Table data is not read.
 - **Recommendations** cover partitioning, sorting keys (from what `query_log` shows queries filter on),
   codecs, data types and skip indexes. Savings are estimates.
+- **What a query filters on** comes from ClickHouse itself: the scan runs `EXPLAIN QUERY TREE` for the most
+  frequent logged SELECTs, which resolves aliases, subqueries, CTEs and joins to the table's own columns.
+  The query is analysed, not run, and a read limit keeps a scalar subquery from reading rows. Where the
+  server cannot analyse a query (no `SELECT` on the table, a query on a view), Granulee reads the columns
+  off the query text after `WHERE` instead.
 - **Without a query log** the scan still covers sizes, codecs, types, partitioning and file counts.
   Granulee says per source why the log is unavailable (switched off, no read access, empty) and shows
   the steps to switch it on.
@@ -91,7 +96,8 @@ state in `backend/data`.
 CREATE USER granulee_ro IDENTIFIED WITH sha256_password BY '…';
 GRANT SELECT ON system.* TO granulee_ro;
 
--- Only for trials (they copy a sample of the table into the scratch database):
+-- For trials (they copy a sample of the table into the scratch database), for the index checks and so
+-- that the scan can ask ClickHouse what the logged queries filter on:
 GRANT SELECT ON analytics.* TO granulee_ro;
 GRANT CREATE TABLE, DROP TABLE, INSERT, SELECT, OPTIMIZE ON scratch.* TO granulee_ro;
 ```

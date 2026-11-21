@@ -157,7 +157,9 @@ class UsageController(private val sources: SourceService, private val scans: Sca
         ).associate { it.str("col") to it.long("c") }
 
         val listed = shapes.sumOf { it.count }.coerceAtLeast(1)
-        val filters = shapes.map { filterText(it.query) to it.count }
+        // The scan has ClickHouse's analysis of its shapes; a shape it did not see is read by its text.
+        val analysed = facts?.queries.orEmpty().associateBy { it.normalized }
+        val filters = shapes.map { (analysed[it.query] ?: QueryFacts(it.query, it.query, it.count)) to it.count }
         val known = facts?.columns.orEmpty().filter { it.defaultKind != "ALIAS" && it.defaultKind != "EPHEMERAL" }
         // Without a scan of the table only the names from the log are known.
         val columnFacts = known.ifEmpty { readBy.keys.sorted().map { ColumnFacts(it, "", "", 0, 0, "", "", false, false, null) } }
@@ -165,7 +167,7 @@ class UsageController(private val sources: SourceService, private val scans: Sca
             val reads = readBy[c.name] ?: 0
             UsageColumn(
                 c.name, c.type, c.compressedBytes, c.inSortingKey, reads, if (selects > 0) reads.toDouble() / selects else 0.0,
-                filters.filter { mentions(it.first, c.name) }.sumOf { it.second }.toDouble() / listed,
+                filters.filter { it.first.filtersOn(c.name) }.sumOf { it.second }.toDouble() / listed,
             )
         }.sortedWith(compareByDescending<UsageColumn> { it.readBy }.thenByDescending { it.compressedBytes })
         val unread = if (selects > 0) columns.filter { it.readBy == 0L && !it.inSortingKey } else emptyList()

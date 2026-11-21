@@ -1,0 +1,40 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    u UInt64
+    lu String
+  PROJECTION
+    LIST id: 1, nodes: 2
+      COLUMN id: 2, column_name: user_id, result_type: UInt64, source_id: 3
+      FUNCTION id: 4, function_name: lower, function_type: ordinary, result_type: String
+        ARGUMENTS
+          LIST id: 5, nodes: 1
+            COLUMN id: 6, column_name: url, result_type: String, source_id: 3
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: analytics.events
+  PREWHERE
+    FUNCTION id: 7, function_name: equals, function_type: ordinary, result_type: Nullable(UInt8)
+      ARGUMENTS
+        LIST id: 8, nodes: 2
+          COLUMN id: 9, column_name: country, result_type: Nullable(String), source_id: 3
+          CONSTANT id: 10, constant_value: 'DE', constant_value_type: String
+  WHERE
+    FUNCTION id: 11, function_name: and, function_type: ordinary, result_type: UInt8
+      ARGUMENTS
+        LIST id: 12, nodes: 3
+          FUNCTION id: 13, function_name: equals, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 14, nodes: 2
+                COLUMN id: 2, column_name: user_id, result_type: UInt64, source_id: 3
+                CONSTANT id: 15, constant_value: UInt64_5, constant_value_type: UInt8
+          FUNCTION id: 16, function_name: like, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 17, nodes: 2
+                FUNCTION id: 18, function_name: lower, function_type: ordinary, result_type: String
+                  ARGUMENTS
+                    LIST id: 19, nodes: 1
+                      COLUMN id: 6, column_name: url, result_type: String, source_id: 3
+                CONSTANT id: 20, constant_value: '%x%', constant_value_type: String
+          FUNCTION id: 21, function_name: not, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 22, nodes: 1
+                COLUMN id: 23, column_name: revenue.null, result_type: UInt8, source_id: 3
