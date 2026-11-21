@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.4](https://github.com/pixelweb-org/granulee/compare/v0.19.3...v0.19.4) (2026-11-21)
+
+
+### Continuous Integration
+
+* test pull requests on a hosted runner and write down the rules for main ([7f6b16e](https://github.com/pixelweb-org/granulee/commit/7f6b16e8da872c0729f287fdfaaa48fd2a143e7c))
+
 ## [0.19.3](https://github.com/pixelweb-org/granulee/compare/v0.19.2...v0.19.3) (2026-11-21)
 
 
