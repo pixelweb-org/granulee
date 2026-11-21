@@ -206,7 +206,9 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
     draft.expression.trim() && !draftProblem ? { name: draftName, expression: draft.expression.trim(), type: draft.type.trim(), granularity: draft.granularity } : null;
   const addIndexes = pending ? [...schema.addIndexes, pending] : schema.addIndexes;
   const nothingChanged = changedKeys === 0 && changedCols.length === 0 && schema.dropIndexes.length === 0 && addIndexes.length === 0;
-  const canStart = plan.trialsEnabled && n > 0 && !nothingChanged && name.trim() !== '' && (sampling !== 'where' || where.trim() !== '');
+  // A trial without changes still has something to show when it compares codecs or measures plain defaults.
+  const extras = [codecBakeoff ? 'compares codecs for the largest columns' : null, plainDefaults ? 'measures today\u2019s table against plain defaults' : null].filter(Boolean);
+  const canStart = plan.trialsEnabled && n > 0 && (!nothingChanged || extras.length > 0) && name.trim() !== '' && (sampling !== 'where' || where.trim() !== '');
 
   const changes = [
     changedKeys ? `${changedKeys} ${changedKeys === 1 ? 'key' : 'keys'}` : null,
@@ -579,7 +581,11 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
           </span>
         </div>
         {nothingChanged ? (
-          <p className="caption muted">The candidate equals the baseline. Change a key or a column, or add or drop a skip index, to have something to compare.</p>
+          <p className="caption muted">
+            {extras.length
+              ? `The candidate equals the baseline, so this trial only ${extras.join(' and ')}.`
+              : 'The candidate equals the baseline. Change a key or a column, add or drop a skip index, or tick “Compare codecs” or “plain defaults” in step 4, to have something to compare.'}
+          </p>
         ) : null}
         <Button stretch disabled={!canStart} busy={start.busy} onClick={submit}>
           {start.busy ? 'Starting…' : 'Start trial'}
