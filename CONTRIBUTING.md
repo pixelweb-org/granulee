@@ -20,6 +20,9 @@ make test              # backend tests, frontend type check and build
 
 ## What a change needs
 
+`main` is protected: a change gets there through a pull request that the maintainer has approved and whose
+`test` check is green. The check runs the same as `make test`.
+
 - `make test` passes.
 - Behaviour that decides something (a rule, generated SQL, a parser, a verdict) has a unit test. Most of
   that code is plain functions that need no server.

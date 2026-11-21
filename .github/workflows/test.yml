@@ -1,0 +1,44 @@
+name: Test
+
+# The check every pull request has to pass before it can be merged: the backend tests, then the frontend
+# type check and build. It runs on a GitHub-hosted runner with a read-only token, so code from a fork
+# never runs on the project's own runner and never sees a credential.
+#
+# A pull request opened by release-please starts no workflow by itself (nothing done with GITHUB_TOKEN
+# does), so the release workflow starts this one for the release branch with workflow_dispatch.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Branch protection requires the check by this name; see .github/branch-protection.json.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # -PwithFrontend runs npm ci and the Vite build, which type-checks the frontend.
+      - name: Test and build
+        working-directory: backend
+        run: ./gradlew build -PwithFrontend

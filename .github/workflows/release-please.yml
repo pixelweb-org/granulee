@@ -38,11 +38,14 @@ jobs:
           echo "### Released $TAG" >> "$GITHUB_STEP_SUMMARY"
 
       # The pr output is empty or not JSON on some runs, so it is read in the shell rather than with fromJSON.
-      - name: Point to the release PR
+      - name: Point to the release PR and test it
         env:
+          GH_TOKEN: ${{ github.token }}
           PR_JSON: ${{ steps.release.outputs.pr }}
         run: |
           pr=$(printf '%s' "$PR_JSON" | grep -o '"number": *[0-9]*' | head -n 1 | tr -dc '0-9')
           [ -n "$pr" ] || exit 0
+          # The release PR needs the "test" check like any other, and opening it started no workflow.
+          gh workflow run test.yml --repo "$GITHUB_REPOSITORY" --ref release-please--branches--main
           echo "### Release PR: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/pull/$pr" >> "$GITHUB_STEP_SUMMARY"
           echo "Merge it to release." >> "$GITHUB_STEP_SUMMARY"

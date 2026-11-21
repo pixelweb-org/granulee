@@ -100,6 +100,27 @@ Jib, with the frontend inside, and pushes it to the registry named in the reposi
 `NEXUS_USERNAME` / `NEXUS_PASSWORD` in the runner's environment. Both workflows only run in this
 repository, not in forks.
 
+### Branch protection
+
+`main` only takes pull requests that
+
+- the maintainer has approved (`.github/CODEOWNERS` names who that is),
+- pass the `test` check from the `Test` workflow: the backend tests and the frontend type check and build,
+  on a GitHub-hosted runner,
+- are up to date with `main` and have no open review conversations.
+
+Force pushes and deleting the branch are off. Repository admins can bypass the rules, which the release
+flow of a single maintainer needs: nobody can approve their own pull request.
+
+The rules are kept in `.github/branch-protection.json` and applied with
+
+```bash
+gh api -X PUT repos/pixelweb-org/granulee/branches/main/protection --input .github/branch-protection.json
+```
+
+A pull request from release-please starts no workflow by itself, so the release workflow starts `Test`
+for the release branch.
+
 To build the same image yourself:
 
 ```bash
