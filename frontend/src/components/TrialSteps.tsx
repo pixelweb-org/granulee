@@ -181,6 +181,8 @@ function RowOrderNote({ result: r }: { result: TrialResult }) {
   const newOrder = order[0] !== order[1];
   const newPartition = partition[0] !== partition[1];
   if (!newOrder && !newPartition) return null;
+  // Where the merge left the two tables with different rows, that explains the sizes, not the order: see MergedRowsNote.
+  if (r.candRows != null && r.candRows !== r.rows) return null;
   // A column counts as moved when it changed by more than a rounding difference between two merges.
   const untouched = r.columns.filter((c) => c.candidate == null && c.baseBytes > 0);
   const grew = untouched.filter((c) => c.candBytes > c.baseBytes * 1.02);
@@ -208,6 +210,23 @@ function RowOrderNote({ result: r }: { result: TrialResult }) {
         .join(', ')}
       . Columns that repeat along the old order lose most; those that follow the new one gain.
       {touched ? ' For a column whose type or codec changed as well, this trial cannot tell the two effects apart.' : ''}
+    </p>
+  );
+}
+
+/**
+ * ReplacingMergeTree and its relatives keep one row per sorting key when they merge. Trial tables have the
+ * production engine, so a candidate with another key can end up with other rows than today's table.
+ */
+function MergedRowsNote({ result: r }: { result: TrialResult }) {
+  if (r.candRows == null || r.candRows === r.rows) return null;
+  const copied = r.copiedRows ?? Math.max(r.rows, r.candRows);
+  return (
+    <p className="g-notice" role="note">
+      The trial tables are <span className="g-mono">{r.engine ?? 'not plain MergeTree'}</span>, as in production, so a merge keeps one row per sorting key. Of{' '}
+      {fmtInt(copied)} copied rows today's table keeps {fmtInt(r.rows)} and the candidate {fmtInt(r.candRows)}: its key makes{' '}
+      {r.candRows < r.rows ? 'more' : 'fewer'} rows duplicates of each other. The difference in size is that before anything else, every column
+      included, and it would be the same on production.
     </p>
   );
 }
@@ -250,6 +269,7 @@ export function TrialSize({ trial, result: r, guide }: { trial: Trial; result: T
   return (
     <section className="stack">
       <RowOrderNote result={r} />
+      <MergedRowsNote result={r} />
       <BytesChart
         type="bar"
         title={`Compressed size, ${largest.length === cols.length ? 'every column' : `${largest.length} largest columns`}`}

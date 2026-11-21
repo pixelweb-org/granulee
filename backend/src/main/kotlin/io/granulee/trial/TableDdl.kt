@@ -6,6 +6,7 @@ import io.granulee.sql.Sql
 import io.granulee.sql.Types
 import io.granulee.sql.indexExpression
 import io.granulee.sql.indexSql
+import io.granulee.sql.localEngine
 import io.granulee.sql.normalizeKey
 import io.granulee.sql.sameText
 
@@ -101,9 +102,12 @@ private const val COMPACT_PARTS = "min_bytes_for_wide_part = 1099511627776, min_
 internal fun trialSettings(live: LiveTable, compactFirst: Boolean = false): String =
     "SETTINGS " + (if (compactFirst) COMPACT_PARTS else WIDE_PARTS) + (live.indexGranularity?.let { ", index_granularity = $it" } ?: "")
 
-/** A trial table: plain MergeTree, whatever the production engine is. */
+/**
+ * A trial table: the production table's engine without replication. A ReplacingMergeTree stays one, so the logged
+ * queries that say FINAL can be replayed and a merge drops the rows it would drop in production.
+ */
 internal fun trialSql(target: String, live: LiveTable, request: TrialRequest?, compactFirst: Boolean = false): String =
-    createSql(target, live, request, "MergeTree", trialSettings(live, compactFirst))
+    createSql(target, live, request, localEngine(live.engineFull), trialSettings(live, compactFirst))
 
 /** How a copied column is read when the candidate gives it another type. */
 internal fun copyExpression(c: ColumnFacts, newType: String?): String = when {

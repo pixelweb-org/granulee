@@ -105,6 +105,15 @@ class MigrationSqlTest {
     }
 
     @Test
+    fun `a trial table has the production engine without its replication`() {
+        assertTrue("\nENGINE = MergeTree\n" in trialSql("`scratch`.`t`", live, null))
+        // FINAL in a replayed query needs the engine it was written for, and a merge has to drop what production drops.
+        val replacing = live.copy(engineFull = "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/mail/messages', '{replica}', event_time) ORDER BY user_id")
+        assertTrue("\nENGINE = ReplacingMergeTree(event_time)\n" in trialSql("`scratch`.`t`", replacing, null))
+        assertTrue("\nENGINE = ReplacingMergeTree(event_time)\n" in trialSql("`scratch`.`t`", replacing, request()))
+    }
+
+    @Test
     fun `the table with plain defaults keeps keys and types and drops codecs and indexes`() {
         val untuned = live.copy(columns = live.columns.map { it.copy(codec = "") }, indexes = emptyList(), projections = emptyList())
         val out = createSql("`scratch`.`t`", untuned, null, "MergeTree", "")

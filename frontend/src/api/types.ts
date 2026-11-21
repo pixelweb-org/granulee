@@ -519,6 +519,9 @@ export interface CodecColumn {
 export interface TrialResult {
   plainDdl?: string; // CREATE TABLE of the table with plain defaults; '' or absent when the trial built none
   codecs?: CodecColumn[]; // absent in trials run before 0.17
+  engine?: string | null; // engine of the trial tables: production's, without replication; absent before 0.20, when they were plain MergeTree
+  copiedRows?: number | null; // rows the sample copied into each table; `rows` is what the baseline holds after its merge
+  candRows?: number | null; // rows the candidate holds after its merge
   rows: number; // rows actually copied
   totalRows: number; // rows in the production table
   metrics: TrialMetric[];

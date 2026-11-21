@@ -18,6 +18,27 @@ class EngineFullTest {
     }
 
     @Test
+    fun `a local copy keeps the engine and its arguments but is not replicated`() {
+        assertEquals("MergeTree", localEngine("MergeTree ORDER BY id"))
+        assertEquals("MergeTree", localEngine(full))
+        assertEquals("ReplacingMergeTree", localEngine("ReplacingMergeTree ORDER BY id"))
+        assertEquals("ReplacingMergeTree(version)", localEngine("ReplacingMergeTree(version) ORDER BY (account_id, folder, uid) SETTINGS index_granularity = 8192"))
+        assertEquals(
+            "ReplacingMergeTree(version, is_deleted)",
+            localEngine("ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/mail/messages', '{replica}', version, is_deleted) ORDER BY id"),
+        )
+        // ClickHouse Cloud words its replication as Shared….
+        assertEquals("SummingMergeTree((clicks, cost))", localEngine("SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', (clicks, cost)) ORDER BY day"))
+        assertEquals("VersionedCollapsingMergeTree(sign, version)", localEngine("VersionedCollapsingMergeTree(sign, version) ORDER BY id"))
+        // A comma inside the keeper path is part of the path, and a string argument of the engine itself stays.
+        assertEquals("ReplacingMergeTree(ver)", localEngine("ReplicatedReplacingMergeTree('/tables/a,b', 'r\\'1', ver) ORDER BY id"))
+        assertEquals("GraphiteMergeTree('graphite_rollup')", localEngine("GraphiteMergeTree('graphite_rollup') ORDER BY (Path, Time)"))
+        // Anything outside the family cannot be copied as it is.
+        assertEquals("MergeTree", localEngine("Distributed('cluster', 'db', 'events')"))
+        assertEquals("MergeTree", localEngine(""))
+    }
+
+    @Test
     fun `what follows the sorting key is kept clause by clause`() {
         assertEquals("SAMPLE BY user_id\nTTL event_time + toIntervalDay(90)\nSETTINGS index_granularity = 4096, ttl_only_drop_parts = 1", engineTail(full))
         assertEquals("", engineTail("MergeTree ORDER BY id"))

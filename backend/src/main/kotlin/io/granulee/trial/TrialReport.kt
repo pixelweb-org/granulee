@@ -3,6 +3,7 @@ package io.granulee.trial
 import io.granulee.Fmt
 import io.granulee.facts.isStored
 import io.granulee.sql.Types
+import io.granulee.sql.localEngine
 import java.util.Locale
 import kotlin.math.abs
 
@@ -23,6 +24,8 @@ internal data class TrialMeasurements(
     val mergeMs: Both<Double?>,
     val plainMergeMs: Double?,
     val codecs: List<CodecColumn>,
+    /** Rows the sample copied into the baseline, before any merge. */
+    val copiedRows: Long,
 )
 
 /** Turns what a run measured into the result a person reads: metrics, columns side by side, and a verdict. */
@@ -47,6 +50,9 @@ internal object TrialReport {
             verdict = verdict(factor, timed),
             codecs = measured.codecs,
             plainDdl = measured.plainDdl,
+            engine = localEngine(live.engineFull),
+            copiedRows = measured.copiedRows,
+            candRows = cand.rows,
         )
     }
 
@@ -111,7 +117,7 @@ internal object TrialReport {
         )
         val baseInsertMs = measured.baseInsertMs
         if (baseInsertMs != null && baseInsertMs > 0 && measured.candInsertMs > 0) {
-            metrics.add(TrialMetric("insert", "Insert throughput", base.rows / (baseInsertMs / 1000), base.rows / (measured.candInsertMs / 1000), "rowsPerSec", false))
+            metrics.add(TrialMetric("insert", "Insert throughput", measured.copiedRows / (baseInsertMs / 1000), measured.copiedRows / (measured.candInsertMs / 1000), "rowsPerSec", false))
         }
         val (baseMergeMs, candMergeMs) = measured.mergeMs
         if (baseMergeMs != null && candMergeMs != null) {

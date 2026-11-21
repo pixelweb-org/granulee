@@ -105,7 +105,21 @@ export function TrialPage() {
         description={
           <span className="body-sm g-num row">
             <Status tone={trialTone(trial)}>{statusWord}</Status>
-            {done && r ? <> · {fmtRows(r.rows)} identical rows in {tables}</> : null}
+            {done && r ? (
+              r.candRows != null && r.candRows !== r.rows ? (
+                <>
+                  {' '}
+                  · {fmtRows(r.copiedRows ?? r.rows)} rows copied into {tables}; merged, today's keeps {fmtRows(r.rows)}, the candidate {fmtRows(r.candRows)}
+                </>
+              ) : r.copiedRows != null && r.copiedRows > r.rows ? (
+                <>
+                  {' '}
+                  · {fmtRows(r.rows)} identical rows in {tables}, merged down from {fmtRows(r.copiedRows)} copied
+                </>
+              ) : (
+                <> · {fmtRows(r.rows)} identical rows in {tables}</>
+              )
+            ) : null}
             {trial.status !== 'running' ? <> · {fmtBytes(trial.scratchBytes)} in scratch, kept until you remove it</> : null}
           </span>
         }

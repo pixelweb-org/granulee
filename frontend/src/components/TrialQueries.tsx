@@ -152,7 +152,12 @@ export function TrialSpeed({
 
 /** One sentence or two on why a query came out as it did: what it touches of the change, and what the runs show. */
 function why(q: TrialQueryResult, v: QueryVerdict, r: TrialResult, guide: Guide, trial: Trial): string {
-  if (v.kind === 'none') return q.error ? `Not run: ${q.error}` : 'Not measured on both tables.';
+  if (v.kind === 'none') {
+    if (!q.error) return 'Not measured on both tables.';
+    // Before 0.20 trial tables were plain MergeTree, which has no FINAL.
+    const final = /ILLEGAL_FINAL/.test(q.error) && !r.engine ? ' This trial built plain MergeTree tables. A new trial builds them with the production engine and can replay this query.' : '';
+    return `Not run: ${q.error}${final}`;
+  }
   const added = (trial.request.addIndexes ?? []).map((i) => i.name);
   const used = (q.candExplain?.steps ?? []).find((s) => s.kind === 'skip' && added.includes(s.name));
   const names = mentioned(q, r);
@@ -169,7 +174,9 @@ function why(q: TrialQueryResult, v: QueryVerdict, r: TrialResult, guide: Guide,
           : guide.changes.some((c) => c.kind === 'key')
             ? 'The candidate stores the rows in another order, which changes what every query has to read.'
             : columns
-              ? `Mentions ${columns === 1 ? 'not the changed column' : 'none of the changed columns'}.`
+              ? columns === 1
+                ? 'Does not mention the changed column.'
+                : 'Mentions none of the changed columns.'
               : '';
   const c = q.candRuns ?? [];
   const where = refName(guide.cmp);

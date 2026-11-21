@@ -9,6 +9,7 @@ import io.granulee.facts.TableFacts
 import io.granulee.facts.isCopied
 import io.granulee.sql.Sql
 import io.granulee.sql.Types
+import io.granulee.sql.localEngine
 import io.granulee.sql.sameText
 
 /**
@@ -68,7 +69,7 @@ internal class TrialRun(
         journal.say("Created both tables in ${trial.scratchDatabase}")
 
         val copied = Copied(live.columns.filter { it.isCopied() })
-        copyBaseline(live, copied)
+        val copiedRows = copyBaseline(live, copied)
         val candInsertMs = copyCandidate(copied)
         val plainDdl = if (request.plainDefaults) copyPlain(live, copied, compactFirst) else ""
         val baseInsertMs = if (request.measureInserts) timeInsert(live, copied, compactFirst) else null
@@ -88,6 +89,13 @@ internal class TrialRun(
         val plainSizes = if (request.plainDefaults) TrialTables.sizes(ch, trial.scratchDatabase, tables.plainName) else null
         journal.update { it.copy(scratchBytes = sizes.base.onDisk + sizes.cand.onDisk + (plainSizes?.onDisk ?: 0)) }
         journal.say((if (request.optimizeFinal) "Fully merged both tables and read" else "Read") + " sizes from system.parts and system.columns")
+        if (sizes.base.rows < copiedRows || sizes.cand.rows < copiedRows) {
+            // ReplacingMergeTree and its relatives keep one row per sorting key, as the production table does.
+            journal.say(
+                "The tables are ${localEngine(live.engineFull)}, as in production: of ${Fmt.count(copiedRows)} copied rows " +
+                    "the baseline keeps ${Fmt.count(sizes.base.rows)} and the candidate ${Fmt.count(sizes.cand.rows)}",
+            )
+        }
 
         val scanMs = if (request.columnScans) scanColumns(copied) else emptyMap()
         val queries = if (request.replayQueries) replayQueries() else emptyList()
@@ -110,11 +118,13 @@ internal class TrialRun(
                 mergeMs = mergeMs,
                 plainMergeMs = plainMergeMs,
                 codecs = codecs,
+                copiedRows = copiedRows,
             ),
         )
     }
 
-    private fun copyBaseline(live: LiveTable, copied: Copied) {
+    /** Fills the baseline with the sample. Returns the rows it copied. */
+    private fun copyBaseline(live: LiveTable, copied: Copied): Long {
         journal.enter(TrialPhase.COPY_BASELINE)
         val production = Sql.table(trial.database, trial.table)
         val filter = sampleFilter(request, live.rows) { TrialTables.partitions(ch, trial.database, trial.table) }
@@ -122,6 +132,7 @@ internal class TrialRun(
         val rows = TrialTables.rowCount(ch, tables.base)
         if (rows == 0L) throw ChException("The sample selected no rows from ${trial.database}.${trial.table}")
         journal.say("Copied ${Fmt.count(rows)} rows from ${trial.database}.${trial.table} into the baseline (${seconds(copy.elapsedMs)})")
+        return rows
     }
 
     /** Fills the candidate from the baseline, so both hold the same rows. Returns how long the insert took. */

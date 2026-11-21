@@ -157,8 +157,11 @@ GRANT CREATE TABLE, DROP TABLE, INSERT, SELECT, OPTIMIZE ON scratch.* TO granule
 - Distinct-value estimates (used for the LowCardinality rule) exist only on servers that report
   `estimates.cardinality` in `system.parts_columns`.
 - Skip-index usage is not in system tables, so index findings are "review" items by size.
-- Trial tables are plain `MergeTree` with wide parts, whatever the production engine is, and carry no
-  projections. A rebuild script recreates the table's projections.
+- Trial tables have the production table's engine without replication (a `ReplicatedReplacingMergeTree`
+  becomes a `ReplacingMergeTree` with the same arguments), wide parts, and carry no projections. So logged
+  queries with `FINAL` replay, and a merge drops the rows it would drop in production: where the candidate
+  changes the sorting key of such a table, the two trial tables can end up with different row counts, and
+  the result says so. A rebuild script recreates the table's projections.
 
 ## Releases
 

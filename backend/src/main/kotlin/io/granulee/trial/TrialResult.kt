@@ -85,6 +85,12 @@ data class TrialResult(
     val codecs: List<CodecColumn> = emptyList(),
     /** CREATE TABLE of the table with plain defaults; empty when the trial did not build one. */
     val plainDdl: String = "",
+    /** The engine of the trial tables: the production engine without replication. Null for trials run before 0.20, which built plain MergeTree. */
+    val engine: String? = null,
+    /** Rows the sample copied into each table. `rows` is what the baseline holds after its merge, which an engine like ReplacingMergeTree makes fewer. */
+    val copiedRows: Long? = null,
+    /** Rows the candidate holds after its merge; differs from `rows` where its sorting key makes other rows duplicates. */
+    val candRows: Long? = null,
 )
 
 /** One codec tried on one column: what the column weighs with it and, where timed, how long a full read takes. */

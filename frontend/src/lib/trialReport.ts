@@ -12,7 +12,9 @@ export function trialReport(trial: Trial, r: TrialResult, guide: Guide): string 
   const out: string[] = [
     `# ${trial.name}`,
     `Trial #${trial.id} of ${trial.database}.${trial.table} on ${trial.sourceName}${trial.finishedAt ? `, finished ${new Date(trial.finishedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : ''}. ` +
-      `${fmtRows(r.rows)} of ${fmtRows(r.totalRows)} rows, identical in every trial table.`,
+      `${fmtRows(r.copiedRows ?? r.rows)} of ${fmtRows(r.totalRows)} rows, copied into every trial table` +
+      (r.engine ? ` (${r.engine})` : '') +
+      (r.candRows != null && r.candRows !== r.rows ? `; merged, today's table keeps ${fmtRows(r.rows)} and the candidate ${fmtRows(r.candRows)}.` : '.'),
     '## Verdict',
     guide.verdict,
   ];

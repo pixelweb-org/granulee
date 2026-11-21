@@ -11,12 +11,13 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 /**
  * The files under resources/state are what release 0.19.1 wrote into its data directory (the stored password
  * replaced, and dismissed.json filled by hand in its format). Whatever the classes are called and wherever they
  * live, these files have to load, and written back they have to be the same bytes: that is the format production
- * has on disk.
+ * has on disk. Where a later release added fields, the test names them.
  */
 class StoredFilesTest {
     @TempDir
@@ -24,13 +25,16 @@ class StoredFilesTest {
 
     private fun fixture(name: String): String = checkNotNull(javaClass.getResource("/state/$name")) { "missing fixture $name" }.readText()
 
-    private fun <T : Any> roundTrip(name: String, type: Class<T>): T {
+    /** `since` is what later releases added to the format: fields an older file does not have, written back as null. */
+    private fun <T : Any> roundTrip(name: String, type: Class<T>, since: String = ""): T {
         val original = fixture(name)
         Files.writeString(dir.resolve(name), original)
         val store = JsonStore(GranuleeProperties(dataDir = dir.toString()))
         val loaded = assertNotNull(store.read(name, type))
         store.write("again-$name", loaded)
-        assertEquals(original, Files.readString(dir.resolve("again-$name")), "$name does not come back as it was stored")
+        val written = Files.readString(dir.resolve("again-$name"))
+        if (since.isNotEmpty()) assertTrue(since in written, "$name is written without $since")
+        assertEquals(original, written.replace(since, ""), "$name does not come back as it was stored")
         return loaded
     }
 
@@ -53,7 +57,8 @@ class StoredFilesTest {
 
     @Test
     fun `trials load and are written back unchanged`() {
-        val trials = roundTrip("trials.json", TrialFile::class.java).trials
+        // 0.20 added the engine of the trial tables and the row counts around the merge to a result.
+        val trials = roundTrip("trials.json", TrialFile::class.java, since = ""","engine":null,"copiedRows":null,"candRows":null""").trials
         assertEquals(listOf("completed", "completed", "completed"), trials.map { it.status })
         val applied = trials.first { it.apply != null }
         assertEquals("completed", applied.optimize?.status)

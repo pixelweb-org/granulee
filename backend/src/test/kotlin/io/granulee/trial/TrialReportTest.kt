@@ -33,7 +33,7 @@ class TrialReportTest {
     ) = TrialMeasurements(
         live = live, sizes = Both(sizes(1000, 800), cand), plainSizes = plain, scanMs = mapOf("url" to Both(12.0, 9.0)), queries = queries,
         baseDdl = "CREATE base", candDdl = "CREATE cand", alterDdl = "ALTER", plainDdl = if (plain == null) "" else "CREATE plain",
-        baseInsertMs = baseInsertMs, candInsertMs = 500.0, mergeMs = mergeMs, plainMergeMs = plain?.let { 30.0 }, codecs = emptyList(),
+        baseInsertMs = baseInsertMs, candInsertMs = 500.0, mergeMs = mergeMs, plainMergeMs = plain?.let { 30.0 }, codecs = emptyList(), copiedRows = 100_000,
     )
 
     private fun metric(result: TrialResult, key: String) = result.metrics.first { it.key == key }
