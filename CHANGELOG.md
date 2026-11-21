@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/pixelweb-org/granulee/compare/v0.18.1...v0.19.0) (2026-11-21)
+
+
+### Features
+
+* guide through a trial's result in six steps under one verdict ([d68c2e6](https://github.com/pixelweb-org/granulee/commit/d68c2e696b7e129810c23e1baf66f44d5fae5a75))
+
 ## [0.18.1](https://github.com/pixelweb-org/granulee/compare/v0.18.0...v0.18.1) (2026-11-21)
 
 
