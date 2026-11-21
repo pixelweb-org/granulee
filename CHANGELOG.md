@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/pixelweb-org/granulee/compare/v0.12.1...v0.13.0) (2026-11-21)
+
+
+### Features
+
+* measure replayed queries with EXPLAIN ANALYZE in a trial ([0e3bc45](https://github.com/pixelweb-org/granulee/commit/0e3bc45414e3f989bf4d5b1c7db224b8b426a0de))
+
 ## [0.12.1](https://github.com/pixelweb-org/granulee/compare/v0.12.0...v0.12.1) (2026-11-21)
 
 
