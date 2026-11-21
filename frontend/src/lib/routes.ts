@@ -8,5 +8,5 @@ export const routes = {
   usage: (sourceId: string, database: string, table: string) => `/tables/${e(sourceId)}/${e(database)}/${e(table)}/usage`,
   recommendations: (sourceId: string, database: string, table: string) => `/recommendations/${e(sourceId)}/${e(database)}/${e(table)}`,
   newTrial: (sourceId: string, database: string, table: string) => `/trials/new?source=${e(sourceId)}&database=${e(database)}&table=${e(table)}`,
-  trial: (id: string, tab?: 'columns' | 'queries' | 'schema') => (tab ? `/trials/${e(id)}/${tab}` : `/trials/${e(id)}`),
+  trial: (id: string, tab?: 'columns' | 'codecs' | 'queries' | 'schema') => (tab ? `/trials/${e(id)}/${tab}` : `/trials/${e(id)}`),
 };

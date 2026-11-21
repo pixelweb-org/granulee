@@ -11,6 +11,7 @@ import { CodeBlock } from '../components/CodeBlock';
 import { PageHeader } from '../components/PageHeader';
 import { ErrorState, Loading } from '../components/States';
 import { Status, type Tone } from '../components/StatusDot';
+import { TrialCodecs } from '../components/TrialCodecs';
 import { TrialQueries } from '../components/TrialQueries';
 import { ApplyTrialDialog, OptimizeTrialDialog, RemoveTrialDialog, TrialProgressCard, trialTone, useRemoveTrial } from '../components/TrialParts';
 import {
@@ -177,6 +178,9 @@ export function TrialPage() {
           <Link to={routes.trial(trial.id, 'columns')} aria-current={tab === 'columns' ? 'page' : undefined}>
             Columns <span className="g-count g-num">{fmtInt(r.columns.length)}</span>
           </Link>
+          <Link to={routes.trial(trial.id, 'codecs')} aria-current={tab === 'codecs' ? 'page' : undefined}>
+            Codecs {r.codecs?.length ? <span className="g-count g-num">{fmtInt(r.codecs.length)}</span> : null}
+          </Link>
           <Link to={routes.trial(trial.id, 'queries')} aria-current={tab === 'queries' ? 'page' : undefined}>
             Queries <span className="g-count g-num">{fmtInt(r.queries.length)}</span>
           </Link>
@@ -248,6 +252,7 @@ export function TrialPage() {
 
       {done && tab === 'summary' ? <Summary trial={trial} result={r} /> : null}
       {done && tab === 'columns' ? <Columns trial={trial} result={r} /> : null}
+      {done && tab === 'codecs' ? <TrialCodecs trial={trial} result={r} /> : null}
       {done && tab === 'queries' ? <TrialQueries trial={trial} result={r} /> : null}
       {done && tab === 'schema' ? <Schema trial={trial} result={r} /> : null}
 
@@ -298,7 +303,7 @@ export function TrialPage() {
   );
 }
 
-const TABS = ['summary', 'columns', 'queries', 'schema'] as const;
+const TABS = ['summary', 'columns', 'codecs', 'queries', 'schema'] as const;
 type Tab = (typeof TABS)[number];
 
 /** What the candidate does differently from the baseline: keys, columns, indexes. */

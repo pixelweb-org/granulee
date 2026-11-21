@@ -157,6 +157,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
   const [measureInserts, setMeasureInserts] = useState(true);
   const [optimizeFinal, setOptimizeFinal] = useState(true);
   const [columnScans, setColumnScans] = useState(true);
+  const [codecBakeoff, setCodecBakeoff] = useState(true);
   const [runs, setRuns] = useState('5');
   // Columns put on the change list by hand, before they differ from the baseline.
   const [extra, setExtra] = useState<string[]>([]);
@@ -231,6 +232,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
       measureInserts,
       optimizeFinal,
       columnScans,
+      codecBakeoff,
       runsPerQuery: runsN,
     };
     await start.run(async () => {
@@ -538,6 +540,9 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
           </Checkbox>
           <Checkbox checked={columnScans} onChange={setColumnScans}>
             Full scan per column to compare read speed
+          </Checkbox>
+          <Checkbox checked={codecBakeoff} onChange={setCodecBakeoff}>
+            Compare codecs for the largest columns: one more table with every codec variant side by side
           </Checkbox>
           <div style={{ maxWidth: 280, marginTop: 8 }}>
             <TextInput label="Runs per query" type="number" min={1} max={20} value={runs} onChange={(e) => setRuns(e.target.value)} help="Median is reported; first run is a warm-up" />

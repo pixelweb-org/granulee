@@ -295,6 +295,8 @@ data class TrialRequest(
     val optimizeFinal: Boolean = true,
     val columnScans: Boolean = true,
     val runsPerQuery: Int = 5,
+    /** Try several codecs on the largest columns and report the best one for each. Off for trials stored before it existed. */
+    val codecBakeoff: Boolean = false,
 )
 
 data class TrialStep(val label: String, val state: String) // done | running | pending | failed
@@ -366,6 +368,8 @@ data class TrialResult(
     val verdict: String,
     /** Statements that apply the candidate to the production table; empty when nothing changes or for trials run before this existed. */
     val alterDdl: String = "",
+    /** The codecs compared for the largest columns; empty when the trial did not compare any. */
+    val codecs: List<CodecColumn> = emptyList(),
 )
 
 data class LogLine(val at: String, val message: String)

@@ -304,6 +304,7 @@ export interface TrialRequest {
   optimizeFinal: boolean;
   columnScans: boolean;
   runsPerQuery: number;
+  codecBakeoff?: boolean; // try several codecs on the largest columns
 }
 
 export type TrialStatus = 'running' | 'completed' | 'failed' | 'cancelled';
@@ -489,7 +490,27 @@ export interface TableWhatIf {
   candidates: WhatIfCandidate[];
 }
 
+/** One codec tried on one column of the sample. */
+export interface CodecVariant {
+  codec: string; // "" = the server's default
+  compressedBytes: number;
+  uncompressedBytes: number;
+  scanMs: number | null; // median full read; only timed for the variants in the running
+}
+
+/** The codecs a trial compared for one column, in the candidate's row order. */
+export interface CodecColumn {
+  name: string;
+  type: string;
+  production: string; // the codec in use today
+  candidate: string; // the codec this trial's candidate uses
+  best: string; // the pick
+  variants: CodecVariant[]; // smallest first
+  defaultIs?: string | null; // the codec the server's default turned out to be
+}
+
 export interface TrialResult {
+  codecs?: CodecColumn[]; // absent in trials run before 0.17
   rows: number; // rows actually copied
   totalRows: number; // rows in the production table
   metrics: TrialMetric[];

@@ -32,6 +32,10 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
   `EXPLAIN WHATIF`: each candidate becomes a hypothetical index in a session, and ClickHouse says how many
   granules of every logged query it would skip. The scan's own proposals are listed to start with. This
   reads table data (ClickHouse builds the candidate in memory) and only runs when you ask for it.
+- **Codecs** are chosen by measuring, not by rule: a trial can build one more scratch table that holds the
+  largest columns once per codec worth trying, in the candidate's row order, and weigh each variant. The
+  report names the codec to use per column (the cheapest to read back within 3% of the smallest; the one in
+  place stays when it is among them), shows every variant, and gives the `ALTER` statements.
 - **Trials** build a baseline and a candidate table in a scratch database, copy the same sample of
   rows into both, merge them, and compare sizes, column scans, insert throughput and replayed queries.
   A replayed query runs several times on each table, the tables taking turns. The result shows the median,

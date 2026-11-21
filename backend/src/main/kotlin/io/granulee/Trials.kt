@@ -421,6 +421,7 @@ class TrialService(
             add(if (request.optimizeFinal) "Full merge, measure sizes" else "Measure sizes")
             if (request.columnScans) add("Scan every column")
             if (request.replayQueries) add("Replay queries")
+            if (request.codecBakeoff) add("Compare codecs for the largest columns")
         }
         val trial = Trial(
             id = id,
@@ -559,7 +560,8 @@ class TrialService(
     }
 
     private fun dropTables(ch: ChConnection, trial: Trial) {
-        listOf(trial.baseTable, trial.candTable, trial.baseTable + "_ins").forEach {
+        val stem = trial.baseTable.removeSuffix("_base")
+        listOf(trial.baseTable, trial.candTable, trial.baseTable + "_ins", stem + "_codecs", stem + "_probe").forEach {
             ch.exec("DROP TABLE IF EXISTS ${Sql.table(trial.scratchDatabase, it)} SYNC")
         }
     }
@@ -779,11 +781,113 @@ class TrialService(
                 )
             }
 
+            // 7. codecs: every variant of the largest columns side by side, in one more table filled from the candidate
+            var codecs = emptyList<CodecColumn>()
+            if (request.codecBakeoff) {
+                enter(++step, 97)
+                val labName = trial.baseTable.removeSuffix("_base") + "_codecs"
+                val lab = Sql.table(trial.scratchDatabase, labName)
+                val probe = Sql.table(trial.scratchDatabase, trial.baseTable.removeSuffix("_base") + "_probe")
+                fun typeOf(c: ColumnFacts) = overrides[c.name]?.type?.ifBlank { null } ?: c.type
+                val tested = copied
+                    .filter { !hasDynamicSubcolumns(typeOf(it)) && (candSizes.columns[it.name]?.first ?: 0) > 0 }
+                    .sortedByDescending { candSizes.columns[it.name]!!.first }
+                    .take(Codecs.MAX_COLUMNS)
+                if (tested.isEmpty()) {
+                    say("No per-column sizes on the candidate, so there is nothing to compare codecs by")
+                } else {
+                    try {
+                        // The server decides which codec it takes for a type; ask it once per pair.
+                        val accepted = HashMap<Pair<String, String>, Boolean>()
+                        fun usable(type: String, codec: String): Boolean = codec.isBlank() || accepted.getOrPut(type to codec) {
+                            try {
+                                exec("CREATE TABLE $probe (v $type${Codecs.clause(codec)}) ENGINE = MergeTree ORDER BY tuple()")
+                                exec("DROP TABLE IF EXISTS $probe SYNC")
+                                true
+                            } catch (e: ChException) {
+                                false
+                            }
+                        }
+                        data class Spec(val column: ColumnFacts, val type: String, val codec: String, val name: String)
+                        val specs = tested.flatMapIndexed { i, c ->
+                            val type = typeOf(c)
+                            val average = if (candSizes.rows > 0) (candSizes.columns[c.name]?.second ?: 0).toDouble() / candSizes.rows else 0.0
+                            val inCandidate = overrides[c.name]?.codec?.trim() ?: Types.codecBody(c.codec)
+                            (listOf(Types.codecBody(c.codec), inCandidate) + Codecs.candidates(type, average)).map { it.trim() }.distinct()
+                                .filter { usable(type, it) }
+                                .mapIndexed { j, codec -> Spec(c, type, codec, "c${i}_v$j") }
+                        }
+                        // The keys have to be there for the rows to lie as in the candidate: that order is what the codecs see.
+                        val keys = live.columns.filter { mentions(request.sortingKey + " " + request.partitionKey, it.name) }
+                        exec("DROP TABLE IF EXISTS $lab SYNC")
+                        exec(
+                            buildString {
+                                append("CREATE TABLE $lab\n(\n")
+                                append((keys.map { "    ${Sql.id(it.name)} ${typeOf(it)}" } + specs.map { "    ${Sql.id(it.name)} ${it.type}${Codecs.clause(it.codec)}" }).joinToString(",\n"))
+                                append("\n)\nENGINE = MergeTree\n")
+                                if (request.partitionKey.isNotBlank()) append("PARTITION BY ${request.partitionKey}\n")
+                                append("ORDER BY (${normalizeKey(request.sortingKey).ifBlank { "tuple()" }})\n")
+                                append("SETTINGS $WIDE_PARTS" + (live.indexGranularity?.let { ", index_granularity = $it" } ?: ""))
+                            },
+                        )
+                        val into = (keys.map { Sql.id(it.name) } + specs.map { Sql.id(it.name) }).joinToString(", ")
+                        val from = (keys.map { Sql.id(it.name) } + specs.map { Sql.id(it.column.name) }).joinToString(", ")
+                        exec("INSERT INTO $lab ($into) SELECT $from FROM $cand", insertSettings)
+                        if (request.optimizeFinal) exec("OPTIMIZE TABLE $lab FINAL")
+                        val measured = conn.query(
+                            """
+                            SELECT name, compression_codec, toInt64(data_compressed_bytes) AS compressed, toInt64(data_uncompressed_bytes) AS uncompressed
+                            FROM system.columns
+                            WHERE database = ${Sql.lit(trial.scratchDatabase)} AND table = ${Sql.lit(labName)}
+                            """.trimIndent(),
+                        ).associateBy { it.str("name") }
+                        val noCache = Explain.uncached(conn)
+                        codecs = tested.map { c ->
+                            val mine = specs.filter { it.column === c }
+                            fun actual(spec: Spec) = Types.codecBody(measured[spec.name]?.str("compression_codec").orEmpty())
+                            fun bytes(spec: Spec) = measured[spec.name]?.long("compressed") ?: 0
+                            val smallest = mine.map(::bytes).filter { it > 0 }.minOrNull() ?: 0
+                            val inProduction = mine.firstOrNull { it.codec == Types.codecBody(c.codec).trim() }
+                            val inCandidate = mine.firstOrNull { it.codec == (overrides[c.name]?.codec?.trim() ?: Types.codecBody(c.codec).trim()) }
+                            // Reading is timed for the ones in the running: close to the smallest, or in use today.
+                            val variants = mine.distinctBy(::actual).map { spec ->
+                                val near = bytes(spec) <= smallest * 1.1 || spec === inProduction || spec === inCandidate
+                                val scan = if (request.columnScans && near) {
+                                    median(
+                                        (1..request.runsPerQuery).map { exec("SELECT count() FROM $lab WHERE NOT ignore(${Sql.id(spec.name)})", noCache).elapsedMs }
+                                            .let { if (it.size >= 3) it.drop(1) else it },
+                                    )
+                                } else {
+                                    null
+                                }
+                                CodecVariant(actual(spec), bytes(spec), measured[spec.name]?.long("uncompressed") ?: 0, scan)
+                            }.sortedBy { it.compressedBytes }.let(Codecs::withoutDefaultTwin)
+                            val production = inProduction?.let(::actual) ?: Types.codecBody(c.codec)
+                            CodecColumn(
+                                name = c.name,
+                                type = typeOf(c),
+                                production = production,
+                                candidate = inCandidate?.let(::actual) ?: production,
+                                best = Codecs.best(variants.first, production.takeIf { inProduction != null }),
+                                variants = variants.first,
+                                defaultIs = variants.second,
+                            )
+                        }
+                        val better = codecs.count { it.best != it.production }
+                        say("Compared ${specs.size} codec variants for the ${codecs.size} largest columns in the candidate's row order: a better one for $better")
+                    } catch (e: ChException) {
+                        say("Comparing codecs failed and is left out: ${e.message}")
+                    } finally {
+                        listOf(lab, probe).forEach { table -> runCatching { conn.exec("DROP TABLE IF EXISTS $table SYNC") } }
+                    }
+                }
+            }
+
             // result
             val result = buildResult(
                 request, live, changedColumns, overrides, baseSizes, candSizes, scanTimes, queryResults, baseDdl, candDdl, alterDdl,
                 baseInsertMs, candCopy.elapsedMs, baseMergeMs, candMergeMs,
-            )
+            ).copy(codecs = codecs)
             update(id) {
                 it.copy(
                     status = "completed",
