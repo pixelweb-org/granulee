@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0](https://github.com/pixelweb-org/granulee/compare/v0.10.0...v0.11.0) (2026-11-21)
+
+
+### Features
+
+* estimate candidate skip indexes with EXPLAIN WHATIF ([63e1e99](https://github.com/pixelweb-org/granulee/commit/63e1e996126e594bb1f4057bdbdb2aee548458d0))
+* show how the primary key and the partition key are used ([63e1e99](https://github.com/pixelweb-org/granulee/commit/63e1e996126e594bb1f4057bdbdb2aee548458d0))
+
+
+### Bug Fixes
+
+* stop showing the Statistics plan step as a skip index ([63e1e99](https://github.com/pixelweb-org/granulee/commit/63e1e996126e594bb1f4057bdbdb2aee548458d0))
+
 ## [0.10.0](https://github.com/pixelweb-org/granulee/compare/v0.9.0...v0.10.0) (2026-11-21)
 
 
