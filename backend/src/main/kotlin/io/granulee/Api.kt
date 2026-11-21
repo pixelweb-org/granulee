@@ -297,6 +297,11 @@ data class TrialRequest(
     val runsPerQuery: Int = 5,
     /** Try several codecs on the largest columns and report the best one for each. Off for trials stored before it existed. */
     val codecBakeoff: Boolean = false,
+    /**
+     * Also build the table as it would be without any tuning: no skip indexes, no projections, the server's default
+     * codec on every column. Keys and types stay. It shows how much today's tuning already buys.
+     */
+    val plainDefaults: Boolean = false,
 )
 
 data class TrialStep(val label: String, val state: String) // done | running | pending | failed
@@ -308,6 +313,8 @@ data class TrialMetric(
     val candidate: Double,
     val unit: String, // bytes | ratio | ms | rows | count | rowsPerSec
     val lowerIsBetter: Boolean,
+    /** The same measure on the table with plain defaults; null when the trial did not build one. */
+    val plain: Double? = null,
 )
 
 data class TrialColumnResult(
@@ -320,6 +327,8 @@ data class TrialColumnResult(
     val candUncompressedBytes: Long,
     val baseScanMs: Double?,
     val candScanMs: Double?,
+    /** The column's size with the server's default codec; null when the trial built no table with plain defaults. */
+    val plainBytes: Long? = null,
 )
 
 data class TrialQueryResult(
@@ -343,6 +352,11 @@ data class TrialQueryResult(
     /** Median CPU time of those runs, summed over all threads, from query_log. Null where the log does not have them. */
     val baseCpuMs: Double? = null,
     val candCpuMs: Double? = null,
+    /** The same query on the table with plain defaults, where the trial built one. */
+    val plainMs: Double? = null,
+    val plainRuns: List<Double>? = null,
+    val plainReadRows: Long? = null,
+    val plainExplain: QueryExplain? = null,
 ) {
     /**
      * Whether the two medians tell the tables apart: no run of the faster table took as long as a run of the slower one.
@@ -370,6 +384,8 @@ data class TrialResult(
     val alterDdl: String = "",
     /** The codecs compared for the largest columns; empty when the trial did not compare any. */
     val codecs: List<CodecColumn> = emptyList(),
+    /** CREATE TABLE of the table with plain defaults; empty when the trial did not build one. */
+    val plainDdl: String = "",
 )
 
 data class LogLine(val at: String, val message: String)

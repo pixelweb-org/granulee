@@ -158,6 +158,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
   const [optimizeFinal, setOptimizeFinal] = useState(true);
   const [columnScans, setColumnScans] = useState(true);
   const [codecBakeoff, setCodecBakeoff] = useState(true);
+  const [plainDefaults, setPlainDefaults] = useState(false);
   const [runs, setRuns] = useState('5');
   // Columns put on the change list by hand, before they differ from the baseline.
   const [extra, setExtra] = useState<string[]>([]);
@@ -233,6 +234,7 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
       optimizeFinal,
       columnScans,
       codecBakeoff,
+      plainDefaults,
       runsPerQuery: runsN,
     };
     await start.run(async () => {
@@ -543,6 +545,9 @@ function TrialForm({ plan }: { plan: TrialPlan }) {
           </Checkbox>
           <Checkbox checked={codecBakeoff} onChange={setCodecBakeoff}>
             Compare codecs for the largest columns: one more table with every codec variant side by side
+          </Checkbox>
+          <Checkbox checked={plainDefaults} onChange={setPlainDefaults}>
+            Also build the table with plain defaults (no skip indexes, no projections, the server's default codec) to see how much today's tuning buys
           </Checkbox>
           <div style={{ maxWidth: 280, marginTop: 8 }}>
             <TextInput label="Runs per query" type="number" min={1} max={20} value={runs} onChange={(e) => setRuns(e.target.value)} help="Median is reported; first run is a warm-up" />

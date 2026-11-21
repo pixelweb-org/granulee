@@ -305,6 +305,7 @@ export interface TrialRequest {
   columnScans: boolean;
   runsPerQuery: number;
   codecBakeoff?: boolean; // try several codecs on the largest columns
+  plainDefaults?: boolean; // also build the table with no skip indexes and the server's default codec
 }
 
 export type TrialStatus = 'running' | 'completed' | 'failed' | 'cancelled';
@@ -323,6 +324,7 @@ export interface TrialMetric {
   candidate: number;
   unit: MetricUnit;
   lowerIsBetter: boolean;
+  plain?: number | null; // the same measure on the table with plain defaults
 }
 
 export interface TrialColumnResult {
@@ -335,6 +337,7 @@ export interface TrialColumnResult {
   candUncompressedBytes: number;
   baseScanMs: number | null;
   candScanMs: number | null;
+  plainBytes?: number | null; // with the server's default codec; only where the trial built a table with plain defaults
 }
 
 export interface TrialQueryResult {
@@ -346,6 +349,10 @@ export interface TrialQueryResult {
   baseReadRows: number | null;
   candReadRows: number | null;
   error: string | null;
+  plainMs?: number | null; // the same query on the table with plain defaults, where the trial built one
+  plainRuns?: number[] | null;
+  plainReadRows?: number | null;
+  plainExplain?: QueryExplain | null;
   baseRuns?: number[] | null; // the runs baseMs is the median of, in ms; absent in trials run before 0.14
   candRuns?: number[] | null;
   baseCpuMs?: number | null; // median CPU time of those runs over all threads, from query_log
@@ -510,6 +517,7 @@ export interface CodecColumn {
 }
 
 export interface TrialResult {
+  plainDdl?: string; // CREATE TABLE of the table with plain defaults; '' or absent when the trial built none
   codecs?: CodecColumn[]; // absent in trials run before 0.17
   rows: number; // rows actually copied
   totalRows: number; // rows in the production table

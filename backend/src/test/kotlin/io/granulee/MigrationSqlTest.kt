@@ -101,6 +101,16 @@ class MigrationSqlTest {
     }
 
     @Test
+    fun `the table with plain defaults keeps keys and types and drops codecs and indexes`() {
+        val untuned = live.copy(columns = live.columns.map { it.copy(codec = "") }, indexes = emptyList(), projections = emptyList())
+        val out = createSql("`scratch`.`t`", untuned, null, "MergeTree", "")
+        assertFalse("CODEC" in out, out)
+        assertFalse("INDEX" in out, out)
+        assertTrue("`properties` String,\n" in out, out)
+        assertTrue("PARTITION BY toYYYYMM(event_time)\nORDER BY (user_id, event_time)" in out, out)
+    }
+
+    @Test
     fun `a key column that changes type is a rebuild`() {
         val out = sql(request(columns = arrayOf(TrialColumn("user_id", "UInt32", ""))))
         assertTrue(out.contains("user_id is a key column and changes its type"), out)

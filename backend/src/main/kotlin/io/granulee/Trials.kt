@@ -418,6 +418,7 @@ class TrialService(
             add("Create baseline and candidate tables")
             add("Copy ${Fmt.rows(request.rows)} rows to baseline")
             add("Copy the same rows to candidate")
+            if (request.plainDefaults) add("Copy the same rows to a table with plain defaults")
             add(if (request.optimizeFinal) "Full merge, measure sizes" else "Measure sizes")
             if (request.columnScans) add("Scan every column")
             if (request.replayQueries) add("Replay queries")
@@ -561,7 +562,7 @@ class TrialService(
 
     private fun dropTables(ch: ChConnection, trial: Trial) {
         val stem = trial.baseTable.removeSuffix("_base")
-        listOf(trial.baseTable, trial.candTable, trial.baseTable + "_ins", stem + "_codecs", stem + "_probe").forEach {
+        listOf(trial.baseTable, trial.candTable, trial.baseTable + "_ins", stem + "_plain", stem + "_codecs", stem + "_probe").forEach {
             ch.exec("DROP TABLE IF EXISTS ${Sql.table(trial.scratchDatabase, it)} SYNC")
         }
     }
@@ -664,6 +665,19 @@ class TrialService(
             val candCopy = exec("INSERT INTO $cand ($columnList) SELECT $expressions FROM $base", insertSettings)
             say("Copied the same rows from the baseline into the candidate (${seconds(candCopy.elapsedMs)}), so both hold identical data")
 
+            // 3b. the same rows with no tuning at all: no skip indexes, no projections, the server's default codec
+            val plainName = trial.baseTable.removeSuffix("_base") + "_plain"
+            val plain = Sql.table(trial.scratchDatabase, plainName)
+            var plainDdl = ""
+            if (request.plainDefaults) {
+                enter(++step, 46)
+                val untuned = live.copy(columns = live.columns.map { it.copy(codec = "") }, indexes = emptyList(), projections = emptyList())
+                plainDdl = trialSql(plain, untuned, null, compactFirst)
+                exec(plainDdl)
+                val plainCopy = exec("INSERT INTO $plain ($columnList) SELECT $columnList FROM $base", insertSettings)
+                say("Copied the same rows into a table with plain defaults: no skip indexes, the server's default codec (${seconds(plainCopy.elapsedMs)})")
+            }
+
             var baseInsertMs: Double? = null
             if (request.measureInserts) {
                 progress(52)
@@ -678,18 +692,21 @@ class TrialService(
             enter(++step, 60)
             var baseMergeMs: Double? = null
             var candMergeMs: Double? = null
+            var plainMergeMs: Double? = null
             if (compactFirst) {
                 // From here on parts are written wide, so the merge below leaves per-column files to measure.
-                listOf(base, cand).forEach { exec("ALTER TABLE $it MODIFY SETTING $WIDE_PARTS") }
+                (listOf(base, cand) + if (request.plainDefaults) listOf(plain) else emptyList()).forEach { exec("ALTER TABLE $it MODIFY SETTING $WIDE_PARTS") }
                 if (!request.optimizeFinal) say("Without the full merge the copied parts stay compact, so per-column sizes are not available")
             }
             if (request.optimizeFinal) {
                 baseMergeMs = exec("OPTIMIZE TABLE $base FINAL").elapsedMs
                 candMergeMs = exec("OPTIMIZE TABLE $cand FINAL").elapsedMs
+                if (request.plainDefaults) plainMergeMs = exec("OPTIMIZE TABLE $plain FINAL").elapsedMs
             }
             val baseSizes = sizes(conn, trial.scratchDatabase, trial.baseTable)
             val candSizes = sizes(conn, trial.scratchDatabase, trial.candTable)
-            update(id) { it.copy(scratchBytes = baseSizes.onDisk + candSizes.onDisk) }
+            val plainSizes = if (request.plainDefaults) sizes(conn, trial.scratchDatabase, plainName) else null
+            update(id) { it.copy(scratchBytes = baseSizes.onDisk + candSizes.onDisk + (plainSizes?.onDisk ?: 0)) }
             say(
                 (if (request.optimizeFinal) "Fully merged both tables and read" else "Read") +
                     " sizes from system.parts and system.columns",
@@ -733,10 +750,12 @@ class TrialService(
                     // The other tables of a logged query are looked up where the session that ran it had them.
                     val baseAll = mutableListOf<ExecStats>()
                     val candAll = mutableListOf<ExecStats>()
+                    val plainAll = mutableListOf<ExecStats>()
                     try {
                         repeat(request.runsPerQuery) {
                             baseAll.add(exec(pointedAt(base), settings, q.database))
                             candAll.add(exec(pointedAt(cand), settings, q.database))
+                            if (request.plainDefaults) plainAll.add(exec(pointedAt(plain), settings, q.database))
                         }
                     } catch (e: ChException) {
                         error = e.message
@@ -749,6 +768,7 @@ class TrialService(
                     val candMs = median(candRuns.map { it.elapsedMs })
                     val baseRead = baseRuns.lastOrNull()?.readRows
                     val candRead = candRuns.lastOrNull()?.readRows
+                    val plainRuns = counted(plainAll)
                     runIds.add(baseRuns.mapNotNull { it.queryId } to candRuns.mapNotNull { it.queryId })
                     // How ClickHouse plans the same query on each table: which indexes narrow it, and how far.
                     val baseExplain = if (error == null) Explain.of(conn, pointedAt(base), "${trial.scratchDatabase}.${trial.baseTable}", settings = planning, database = q.database) else null
@@ -761,6 +781,14 @@ class TrialService(
                             "Q${i + 1}", q.normalized, q.count.toDouble() / total, baseMs, candMs, baseRead, candRead, error,
                             baseExplain, candExplain, baseAnalyze, candAnalyze,
                             baseRuns.map { it.elapsedMs }.takeIf { it.isNotEmpty() }, candRuns.map { it.elapsedMs }.takeIf { it.isNotEmpty() },
+                            plainMs = median(plainRuns.map { it.elapsedMs }),
+                            plainRuns = plainRuns.map { it.elapsedMs }.takeIf { it.isNotEmpty() },
+                            plainReadRows = plainRuns.lastOrNull()?.readRows,
+                            plainExplain = if (request.plainDefaults && error == null) {
+                                Explain.of(conn, pointedAt(plain), "${trial.scratchDatabase}.$plainName", pipeline = false, settings = planning, database = q.database)
+                            } else {
+                                null
+                            },
                         ),
                     )
                     progress(85 + (i + 1) * 13 / queries.size)
@@ -886,8 +914,8 @@ class TrialService(
             // result
             val result = buildResult(
                 request, live, changedColumns, overrides, baseSizes, candSizes, scanTimes, queryResults, baseDdl, candDdl, alterDdl,
-                baseInsertMs, candCopy.elapsedMs, baseMergeMs, candMergeMs,
-            ).copy(codecs = codecs)
+                baseInsertMs, candCopy.elapsedMs, baseMergeMs, candMergeMs, plainSizes, plainMergeMs,
+            ).copy(codecs = codecs, plainDdl = plainDdl)
             update(id) {
                 it.copy(
                     status = "completed",
@@ -1062,6 +1090,8 @@ class TrialService(
         candInsertMs: Double,
         baseMergeMs: Double?,
         candMergeMs: Double?,
+        plain: Sizes? = null,
+        plainMergeMs: Double? = null,
     ): TrialResult {
         fun label(type: String, codec: String) = "$type · ${codec.ifEmpty { "LZ4" }}"
         val columns = live.columns.filter { it.defaultKind != "ALIAS" && it.defaultKind != "EPHEMERAL" }.map { c ->
@@ -1078,39 +1108,50 @@ class TrialService(
                 candUncompressedBytes = k.second,
                 baseScanMs = scanTimes[c.name]?.first,
                 candScanMs = scanTimes[c.name]?.second,
+                plainBytes = plain?.let { it.columns[c.name]?.first ?: 0 },
             )
         }.sortedByDescending { it.baseBytes }
 
         val metrics = mutableListOf(
-            TrialMetric("size", "Compressed size", base.compressed.toDouble(), cand.compressed.toDouble(), "bytes", true),
+            TrialMetric("size", "Compressed size", base.compressed.toDouble(), cand.compressed.toDouble(), "bytes", true, plain?.compressed?.toDouble()),
             TrialMetric(
                 "ratio", "Compression ratio",
                 if (base.compressed > 0) base.uncompressed.toDouble() / base.compressed else 0.0,
                 if (cand.compressed > 0) cand.uncompressed.toDouble() / cand.compressed else 0.0,
                 "ratio", false,
+                plain?.let { if (it.compressed > 0) it.uncompressed.toDouble() / it.compressed else 0.0 },
             ),
         )
         val timed = queries.filter { it.baseMs != null && it.candMs != null }
         if (timed.isNotEmpty()) {
-            metrics.add(TrialMetric("query", "Median query, ${timed.size} replayed", median(timed.map { it.baseMs!! })!!, median(timed.map { it.candMs!! })!!, "ms", true))
+            val onPlain = timed.filter { it.plainMs != null }
+            metrics.add(
+                TrialMetric(
+                    "query", "Median query, ${timed.size} replayed", median(timed.map { it.baseMs!! })!!, median(timed.map { it.candMs!! })!!, "ms", true,
+                    median(onPlain.map { it.plainMs!! }),
+                ),
+            )
             metrics.add(
                 TrialMetric(
                     "read", "Rows read per query, median",
                     median(timed.map { (it.baseReadRows ?: 0).toDouble() })!!, median(timed.map { (it.candReadRows ?: 0).toDouble() })!!, "rows", true,
+                    median(onPlain.map { (it.plainReadRows ?: 0).toDouble() }),
                 ),
             )
         }
-        metrics.add(TrialMetric("parts", if (request.optimizeFinal) "Parts after full merge" else "Active parts", base.parts.toDouble(), cand.parts.toDouble(), "count", true))
+        metrics.add(
+            TrialMetric("parts", if (request.optimizeFinal) "Parts after full merge" else "Active parts", base.parts.toDouble(), cand.parts.toDouble(), "count", true, plain?.parts?.toDouble()),
+        )
         if (baseInsertMs != null && baseInsertMs > 0 && candInsertMs > 0) {
             metrics.add(TrialMetric("insert", "Insert throughput", base.rows / (baseInsertMs / 1000), base.rows / (candInsertMs / 1000), "rowsPerSec", false))
         }
         if (baseMergeMs != null && candMergeMs != null) {
-            metrics.add(TrialMetric("merge", "Full merge (OPTIMIZE FINAL)", baseMergeMs, candMergeMs, "ms", true))
+            metrics.add(TrialMetric("merge", "Full merge (OPTIMIZE FINAL)", baseMergeMs, candMergeMs, "ms", true, plainMergeMs))
         }
         if (base.indexBytes > 0 || cand.indexBytes > 0) {
-            metrics.add(TrialMetric("indexes", "Skip indexes on disk", base.indexBytes.toDouble(), cand.indexBytes.toDouble(), "bytes", true))
+            metrics.add(TrialMetric("indexes", "Skip indexes on disk", base.indexBytes.toDouble(), cand.indexBytes.toDouble(), "bytes", true, plain?.indexBytes?.toDouble()))
         }
-        metrics.add(TrialMetric("pk", "Primary key in memory", base.primaryKeyBytes.toDouble(), cand.primaryKeyBytes.toDouble(), "bytes", true))
+        metrics.add(TrialMetric("pk", "Primary key in memory", base.primaryKeyBytes.toDouble(), cand.primaryKeyBytes.toDouble(), "bytes", true, plain?.primaryKeyBytes?.toDouble()))
 
         val factor = if (base.compressed > 0) cand.compressed.toDouble() / base.compressed else 1.0
         return TrialResult(

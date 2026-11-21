@@ -23,6 +23,7 @@ import {
   fmtInt,
   fmtMs,
   fmtMsPair,
+  fmtPct,
   fmtRatio,
   fmtRatioValue,
   fmtRows,
@@ -97,6 +98,100 @@ function metricValue(m: TrialMetric): string {
     default:
       return `${fmtInt(m.baseline)} → ${fmtInt(m.candidate)}`;
   }
+}
+
+/** One value of a measure, in its unit. */
+function metricOne(unit: TrialMetric['unit'], v: number): string {
+  switch (unit) {
+    case 'bytes':
+      return fmtBytes(v);
+    case 'ms':
+      return fmtMs(v);
+    case 'ratio':
+      return fmtRatioValue(v);
+    case 'rows':
+      return fmtRows(v);
+    case 'rowsPerSec':
+      return `${fmtRows(v)} rows/s`;
+    default:
+      return fmtInt(v);
+  }
+}
+
+/**
+ * How far today's table already is from one with no tuning: the same rows with no skip indexes, no projections
+ * and the server's default codec on every column. Only where the trial built that third table.
+ */
+function AgainstDefaults({ result: r }: { result: TrialResult }) {
+  const rows = r.metrics.filter((m) => m.plain != null);
+  if (!r.plainDdl || !rows.length) return null;
+  const size = rows.find((m) => m.key === 'size');
+  const query = rows.find((m) => m.key === 'query');
+  const smaller = size && size.plain! > 0 ? 1 - size.baseline / size.plain! : null;
+  const speed = query && query.plain! > 0 && query.baseline > 0 ? query.plain! / query.baseline : null;
+  return (
+    <section className="stack">
+      <h2 className="card-title">Against plain defaults</h2>
+      <p className="body-sm muted">
+        The same rows in a table with no tuning: no skip indexes, no projections, the server's default codec on every column. Keys and types are today's.
+        {smaller != null ? (
+          <>
+            {' '}
+            Today's table is{' '}
+            <span className="ink" style={{ fontWeight: 700 }}>
+              {fmtPct(Math.abs(smaller), 0)} {smaller >= 0 ? 'smaller' : 'larger'}
+            </span>{' '}
+            than that
+            {speed != null ? (
+              <>
+                {' '}
+                and answers the median query{' '}
+                <span className="ink" style={{ fontWeight: 700 }}>
+                  {Math.abs(speed - 1) < 0.05 ? 'about as fast' : speed > 1 ? `${speed.toFixed(1)}× faster` : `${(1 / speed).toFixed(1)}× slower`}
+                </span>
+              </>
+            ) : null}
+            .
+          </>
+        ) : null}
+      </p>
+      <Card table>
+        <table className="g-tbl">
+          <thead>
+            <tr>
+              <th>Measure</th>
+              <th className="r">Plain defaults</th>
+              <th className="r">Today</th>
+              <th className="r">Candidate</th>
+              <th>Today against defaults</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((m) => {
+              // Nothing to take a percentage of where plain defaults have none of it, as with skip indexes.
+              const v =
+                m.plain === 0 && m.baseline > 0
+                  ? { tone: 'muted' as Tone, text: `${metricOne(m.unit, m.baseline)} added by the tuning` }
+                  : metricVerdict({ ...m, baseline: m.plain!, candidate: m.baseline });
+              return (
+                <tr key={m.key}>
+                  <td className="g-strong">{m.label}</td>
+                  <td className="r nowrap">{metricOne(m.unit, m.plain!)}</td>
+                  <td className="r g-strong nowrap">{metricOne(m.unit, m.baseline)}</td>
+                  <td className="r nowrap">{metricOne(m.unit, m.candidate)}</td>
+                  <td>
+                    <Status tone={v.tone} className="caption g-num">
+                      {v.text}
+                    </Status>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+    </section>
+  );
 }
 
 function metricVerdict(m: TrialMetric): { tone: Tone; text: string } {
@@ -381,6 +476,7 @@ function Summary({ trial, result: r }: { trial: Trial; result: TrialResult }) {
         </section>
       ) : null}
 
+      <AgainstDefaults result={r} />
       <Changes trial={trial} result={r} />
     </>
   );
@@ -395,6 +491,8 @@ function Columns({ trial, result: r }: { trial: Trial; result: TrialResult }) {
   const totalCandUnc = cols.reduce((a, c) => a + c.candUncompressedBytes, 0);
   const hasScans = cols.some((c) => c.baseScanMs != null && c.candScanMs != null);
   const scanCols = cols.filter((c) => c.candidate != null && c.baseScanMs != null && c.candScanMs != null);
+  const hasPlain = cols.some((c) => c.plainBytes != null);
+  const totalPlain = cols.reduce((a, c) => a + (c.plainBytes ?? 0), 0);
   return (
     <>
       <RowOrderNote result={r} />
@@ -406,8 +504,9 @@ function Columns({ trial, result: r }: { trial: Trial; result: TrialResult }) {
           categoryLabel="Column"
           categories={cols.map((c) => c.name)}
           series={[
-            { name: 'Baseline', values: cols.map((c) => c.baseBytes) },
-            { name: 'Candidate', values: cols.map((c) => c.candBytes) },
+            ...(hasPlain ? [{ name: 'Plain defaults', values: cols.map((c) => c.plainBytes ?? 0), slot: 3 }] : []),
+            { name: 'Baseline', values: cols.map((c) => c.baseBytes), slot: 1 },
+            { name: 'Candidate', values: cols.map((c) => c.candBytes), slot: 2 },
           ]}
           height={240}
         />
@@ -442,6 +541,7 @@ function Columns({ trial, result: r }: { trial: Trial; result: TrialResult }) {
                 <th>Column</th>
                 <th>Baseline</th>
                 <th>Candidate</th>
+                {hasPlain ? <th className="r">Plain defaults</th> : null}
                 <th className="r">Size before</th>
                 <th className="r">Size after</th>
                 <th className="r">Change</th>
@@ -459,6 +559,7 @@ function Columns({ trial, result: r }: { trial: Trial; result: TrialResult }) {
                     <td className="g-strong">{c.name}</td>
                     <td className="g-mono">{c.baseline}</td>
                     <td className={`g-mono${changed ? ' ink' : ''}`}>{c.candidate ?? 'unchanged'}</td>
+                    {hasPlain ? <td className="r nowrap">{c.plainBytes != null ? fmtBytes(c.plainBytes) : '—'}</td> : null}
                     <td className="r nowrap">{fmtBytes(c.baseBytes)}</td>
                     <td className="r g-strong nowrap">{fmtBytes(c.candBytes)}</td>
                     <td className={`r${changed || moved ? ' g-strong' : ''}`}>{fmtChange(c.baseBytes, c.candBytes)}</td>
@@ -484,6 +585,7 @@ function Columns({ trial, result: r }: { trial: Trial; result: TrialResult }) {
                 <td className="g-strong">Total</td>
                 <td />
                 <td />
+                {hasPlain ? <td className="r g-strong nowrap">{fmtBytes(totalPlain)}</td> : null}
                 <td className="r g-strong nowrap">{fmtBytes(totalBase)}</td>
                 <td className="r g-strong nowrap">{fmtBytes(totalCand)}</td>
                 <td className="r g-strong">{fmtChange(totalBase, totalCand)}</td>
@@ -495,7 +597,10 @@ function Columns({ trial, result: r }: { trial: Trial; result: TrialResult }) {
             </tbody>
           </table>
         </Card>
-        <p className="caption muted">Highlighted rows were changed in this trial.</p>
+        <p className="caption muted">
+          Highlighted rows were changed in this trial.
+          {hasPlain ? ' “Plain defaults” is the column with the server\u2019s default codec, in a table without skip indexes.' : ''}
+        </p>
       </section>
     </>
   );
@@ -532,6 +637,14 @@ function Schema({ trial, result: r }: { trial: Trial; result: TrialResult }) {
           </h2>
           <CodeBlock code={r.candDdl} />
         </div>
+        {r.plainDdl ? (
+          <div className="stack" style={vars({ gap: 12 })}>
+            <h2 className="subhead" style={{ overflowWrap: 'anywhere' }}>
+              Plain defaults · {trial.scratchDatabase}.{trial.baseTable.replace(/_base$/, '_plain')}
+            </h2>
+            <CodeBlock code={r.plainDdl} />
+          </div>
+        ) : null}
       </section>
     </>
   );

@@ -206,6 +206,7 @@ function QueryCard({ q, verdict, open, onToggle }: { q: TrialQueryResult; verdic
       <div className="q-card__summary">
         <dl className="facts">
           <Fact label="Share of workload">{fmtPct(q.share, 0)}</Fact>
+          {q.plainMs != null ? <Fact label="Plain defaults">{fmtMs(q.plainMs)}</Fact> : null}
           <Fact label="Baseline">{fmtMs(q.baseMs)}</Fact>
           <Fact label="Candidate" strong>
             {fmtMs(q.candMs)}
@@ -284,6 +285,8 @@ function niceMax(value: number): number {
  */
 function RunsPlot({ q, compact }: { q: TrialQueryResult; compact?: boolean }) {
   const lanes = [
+    // The table with plain defaults is the point of reference; it leads where the trial built one.
+    ...(q.plainMs != null ? [{ name: 'Defaults', slot: 3, median: q.plainMs, runs: q.plainRuns?.length ? q.plainRuns : [q.plainMs] }] : []),
     { name: 'Baseline', slot: 1, median: q.baseMs!, runs: q.baseRuns?.length ? q.baseRuns : [q.baseMs!] },
     { name: 'Candidate', slot: 2, median: q.candMs!, runs: q.candRuns?.length ? q.candRuns : [q.candMs!] },
   ];
@@ -330,27 +333,33 @@ function RunsPlot({ q, compact }: { q: TrialQueryResult; compact?: boolean }) {
  * own scale, set by the larger of its two values, so the bars compare the tables and not the measures.
  */
 function WorkBars({ q }: { q: TrialQueryResult }) {
-  const rows: { name: string; base: number | null | undefined; cand: number | null | undefined; format: (v: number) => string }[] = [
-    { name: 'Median time', base: q.baseMs, cand: q.candMs, format: fmtMs },
+  const rows: { name: string; base: number | null | undefined; cand: number | null | undefined; plain?: number | null; format: (v: number) => string }[] = [
+    { name: 'Median time', base: q.baseMs, cand: q.candMs, plain: q.plainMs, format: fmtMs },
     { name: 'CPU time', base: q.baseCpuMs, cand: q.candCpuMs, format: fmtMs },
-    { name: 'Rows read', base: q.baseReadRows, cand: q.candReadRows, format: fmtRows },
-    { name: 'Granules read', base: q.baseExplain?.granulesRead, cand: q.candExplain?.granulesRead, format: fmtInt },
+    { name: 'Rows read', base: q.baseReadRows, cand: q.candReadRows, plain: q.plainReadRows, format: fmtRows },
+    { name: 'Granules read', base: q.baseExplain?.granulesRead, cand: q.candExplain?.granulesRead, plain: q.plainExplain?.granulesRead, format: fmtInt },
   ];
   const shown = rows.filter((r): r is typeof r & { base: number; cand: number } => r.base != null && r.cand != null);
   if (!shown.length) return null;
   return (
     <div className="q-work">
       {shown.map((r) => {
-        const max = Math.max(r.base, r.cand);
+        const max = Math.max(r.base, r.cand, r.plain ?? 0);
         const change = r.base > 0 ? (r.cand - r.base) / r.base : 0;
         return (
-          <div key={r.name} className="q-work__row" title={`${r.name}: baseline ${r.format(r.base)}, candidate ${r.format(r.cand)}`}>
+          <div
+            key={r.name}
+            className="q-work__row"
+            title={`${r.name}: ${r.plain != null ? `plain defaults ${r.format(r.plain)}, ` : ''}baseline ${r.format(r.base)}, candidate ${r.format(r.cand)}`}
+          >
             <span className="caption">{r.name}</span>
             <span className="q-work__bars">
+              {r.plain != null ? <span className="q-work__bar" style={{ width: max > 0 ? `${(r.plain / max) * 100}%` : 0, background: 'var(--chart-3)' }} /> : null}
               <span className="q-work__bar" style={{ width: max > 0 ? `${(r.base / max) * 100}%` : 0, background: 'var(--chart-1)' }} />
               <span className="q-work__bar" style={{ width: max > 0 ? `${(r.cand / max) * 100}%` : 0, background: 'var(--chart-2)' }} />
             </span>
             <span className="caption g-num q-work__value">
+              {r.plain != null ? <span className="muted">defaults {r.format(r.plain)} · </span> : null}
               {r.format(r.base)} → <span className="ink" style={{ fontWeight: 700 }}>{r.format(r.cand)}</span>
               {Math.abs(change) >= 0.005 ? <span className="muted"> · {change > 0 ? '+' : '−'}{fmtPct(Math.abs(change), 0)}</span> : null}
             </span>
@@ -358,6 +367,11 @@ function WorkBars({ q }: { q: TrialQueryResult }) {
         );
       })}
       <ul className="bd-chart-legend caption" style={{ margin: 0 }}>
+        {shown.some((r) => r.plain != null) ? (
+          <li>
+            <span className="bd-chart-key-rect" style={{ background: 'var(--chart-3)' }} /> Plain defaults
+          </li>
+        ) : null}
         <li>
           <span className="bd-chart-key-rect" style={{ background: 'var(--chart-1)' }} /> Baseline
         </li>

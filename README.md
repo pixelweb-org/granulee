@@ -41,6 +41,9 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
   A replayed query runs several times on each table, the tables taking turns. The result shows the median,
   the fastest and slowest run and the CPU time from `query_log`. Where the runs of the two tables overlap,
   it says "no clear difference" instead of naming a factor.
+  On request a trial also builds the table with plain defaults (no skip indexes, no projections, the
+  server's default codec on every column, today's keys and types) and measures it the same way, which
+  shows how much the tuning the table already has buys.
   Each replayed query is also planned with `EXPLAIN` on both tables, so the result shows which indexes
   narrowed it, the granules read and the read streams. On servers that have `EXPLAIN ANALYZE` it is run
   once more with it: the result then shows planning and execution time, peak memory, and for every step
