@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.3](https://github.com/pixelweb-org/granulee/compare/v0.19.2...v0.19.3) (2026-11-21)
+
+
+### Documentation
+
+* prepare the repository for going public ([da5f474](https://github.com/pixelweb-org/granulee/commit/da5f4747084b3fb749cc0caf38d9c1fef8a73005))
+
 ## [0.19.2](https://github.com/pixelweb-org/granulee/compare/v0.19.1...v0.19.2) (2026-11-21)
 
 
