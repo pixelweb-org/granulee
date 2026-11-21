@@ -189,7 +189,7 @@ class WhatIfController(private val sources: SourceService, private val scans: Sc
                 // A query on a Buffer table in front is estimated against the table behind it.
                 val sql = facts.buffers.fold(q.query) { text, buffer -> rewriteQuery(text, buffer.substringBefore('.'), buffer.substringAfter('.'), target) }
                 q to try {
-                    Result.success(WhatIf.parse(ch.query("EXPLAIN WHATIF ${Explain.clean(sql)}", settings, session).joinToString("\n") { it.str("explain") }))
+                    Result.success(WhatIf.parse(ch.query("EXPLAIN WHATIF ${Explain.clean(sql)}", settings, session, q.database).joinToString("\n") { it.str("explain") }))
                 } catch (e: Exception) {
                     Result.failure(e)
                 }

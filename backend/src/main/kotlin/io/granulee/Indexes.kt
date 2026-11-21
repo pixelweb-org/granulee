@@ -89,7 +89,7 @@ class IndexController(private val sources: SourceService, private val scans: Sca
         val planned = shapes.values.sortedByDescending { it.count }.map { q ->
             // A query on a Buffer table in front is planned against the table behind it.
             val sql = facts.buffers.fold(q.query) { text, buffer -> rewriteQuery(text, buffer.substringBefore('.'), buffer.substringAfter('.'), target) }
-            q to Explain.of(ch, sql, "$db.$table", pipeline = false, settings = settings, projections = names)
+            q to Explain.of(ch, sql, "$db.$table", pipeline = false, settings = settings, projections = names, database = q.database)
         }
         val indexes = facts.indexes.map { index ->
             val used = planned.withIndex().mapNotNull { (at, pair) ->
@@ -149,9 +149,9 @@ class IndexController(private val sources: SourceService, private val scans: Sca
     private fun projectionReads(ch: ChConnection, prefix: String, days: Int): Map<String, List<QueryFacts>> = try {
         ch.query(
             """
-            SELECT p, substring(q, 1, 20000) AS q, substring(normalizeQuery(q), 1, 4000) AS nq, toInt64(c) AS c
+            SELECT p, substring(q, 1, 20000) AS q, substring(normalizeQuery(q), 1, 4000) AS nq, d, toInt64(c) AS c
             FROM (
-                SELECT p, any(query) AS q, count() AS c
+                SELECT p, any((query, current_database)) AS qd, qd.1 AS q, qd.2 AS d, count() AS c
                 FROM system.query_log ARRAY JOIN projections AS p
                 WHERE event_date >= today() - $days AND type = 'QueryFinish' AND query_kind = 'Select' AND is_initial_query
                   AND $NOT_GRANULEE AND startsWith(p, ${Sql.lit(prefix)})
@@ -160,7 +160,7 @@ class IndexController(private val sources: SourceService, private val scans: Sca
             ORDER BY c DESC
             LIMIT 5 BY p
             """.trimIndent(),
-        ).groupBy({ it.str("p").removePrefix(prefix) }) { QueryFacts(it.str("q"), it.str("nq"), it.long("c")) }
+        ).groupBy({ it.str("p").removePrefix(prefix) }) { QueryFacts(it.str("q"), it.str("nq"), it.long("c"), database = it.str("d").ifBlank { null }) }
     } catch (e: Exception) {
         emptyMap()
     }

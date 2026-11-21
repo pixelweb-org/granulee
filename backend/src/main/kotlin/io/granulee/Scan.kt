@@ -289,7 +289,8 @@ class ScanService(
         val analysed = HashMap<String, Map<String, Map<String, Set<String>>>?>()
         val analyseUntil = System.nanoTime() + ANALYSE_BUDGET_NS
         fun withFilters(table: String, shapes: List<QueryFacts>): List<QueryFacts> = shapes.map { q ->
-            val all = analysed[q.query] ?: if (q.query in analysed || System.nanoTime() > analyseUntil) null else QueryTree.analyse(ch, q.query).also { analysed[q.query] = it }
+            val key = q.database.orEmpty() + "\u0000" + q.query
+            val all = analysed[key] ?: if (key in analysed || System.nanoTime() > analyseUntil) null else QueryTree.analyse(ch, q.query, q.database).also { analysed[key] = it }
             q.copy(filters = QueryTree.on(all, listOf(table) + buffers[table].orEmpty()))
         }
 
@@ -377,10 +378,10 @@ class ScanService(
         val behind = buffers.flatMap { (target, fronts) -> fronts.map { it to target } }.toMap()
         return ch.query(
             """
-            SELECT t, substring(q, 1, 20000) AS q, substring(normalizeQuery(q), 1, 4000) AS nq, toInt64(c) AS c,
+            SELECT t, substring(q, 1, 20000) AS q, substring(normalizeQuery(q), 1, 4000) AS nq, d, toInt64(c) AS c,
                    toInt64(sum(c) OVER (PARTITION BY t)) AS total
             FROM (
-                SELECT arrayJoin(tables) AS t, normalized_query_hash AS h, any(query) AS q, count() AS c
+                SELECT arrayJoin(tables) AS t, normalized_query_hash AS h, any((query, current_database)) AS qd, qd.1 AS q, qd.2 AS d, count() AS c
                 FROM system.query_log
                 WHERE event_date >= today() - $days AND type = 'QueryFinish' AND query_kind = 'Select' AND is_initial_query AND $NOT_GRANULEE
                 GROUP BY t, h
@@ -390,7 +391,7 @@ class ScanService(
             LIMIT 20 BY t
             """.trimIndent(),
         ).groupBy { it.str("t") }.mapValues { (_, rows) ->
-            rows.map { QueryFacts(it.str("q"), it.str("nq"), it.long("c")) } to rows.first().long("total")
+            rows.map { QueryFacts(it.str("q"), it.str("nq"), it.long("c"), database = it.str("d").ifBlank { null }) } to rows.first().long("total")
         }.entries.groupBy({ behind[it.key] ?: it.key }, { it.value }).mapValues { (_, parts) ->
             parts.flatMap { it.first }.sortedByDescending { it.count }.take(20) to parts.sumOf { it.second }
         }

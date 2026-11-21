@@ -36,11 +36,11 @@ object QueryTree {
     }
 
     /**
-     * Asks the server how it reads the query. Null when it cannot: the user may not read the table, the server has
+     * Asks the server how it reads the query; `database` is where its unqualified table names live. Null when it cannot: the user may not read the table, the server has
      * no analyzer, the logged text was cut, or a scalar subquery would have had to read data.
      */
-    fun analyse(ch: ChConnection, query: String): Map<String, Map<String, Set<String>>>? = try {
-        filters(ch.query("EXPLAIN QUERY TREE ${Explain.clean(query)}", ANALYSE_ONLY).joinToString("\n") { it.str("explain") })
+    fun analyse(ch: ChConnection, query: String, database: String? = null): Map<String, Map<String, Set<String>>>? = try {
+        filters(ch.query("EXPLAIN QUERY TREE ${Explain.clean(query)}", ANALYSE_ONLY, database = database).joinToString("\n") { it.str("explain") })
     } catch (e: Exception) {
         null
     }

@@ -34,6 +34,8 @@ data class QueryFacts(
     // Column → how the query filters on it ("eq", "range", "has", "like", "other"), from ClickHouse's own analysis
     // of the query. Null where the scan could not get one; then the query text has to do.
     val filters: Map<String, Set<String>>? = null,
+    // The default database of the session that ran it: where its unqualified table names are looked up.
+    val database: String? = null,
 )
 
 /**

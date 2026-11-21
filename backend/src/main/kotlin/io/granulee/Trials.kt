@@ -595,12 +595,12 @@ class TrialService(
         // Set once the live table is known; applied to every statement of the run.
         var limits = emptyMap<String, String>()
         var compactFirst = false
-        fun exec(sql: String, settings: Map<String, String> = emptyMap()): ExecStats {
+        fun exec(sql: String, settings: Map<String, String> = emptyMap(), database: String? = null): ExecStats {
             if (id in cancelled) throw TrialCancelled()
             val queryId = "granulee-$id-${++statement}"
             runningQuery[id] = queryId
             try {
-                return ch!!.exec(sql, limits + settings, queryId)
+                return ch!!.exec(sql, limits + settings, queryId, database = database)
             } catch (e: ChException) {
                 if (id in cancelled) throw TrialCancelled()
                 throw e
@@ -727,7 +727,8 @@ class TrialService(
                     }
                     fun replay(target: String): Pair<Double?, Long?> = try {
                         val sql = pointedAt(target)
-                        val runs = (1..request.runsPerQuery).map { exec(sql, settings) }
+                        // The other tables of a logged query are looked up where the session that ran it had them.
+                        val runs = (1..request.runsPerQuery).map { exec(sql, settings, q.database) }
                         median(runs.map { it.elapsedMs }.let { if (it.size >= 3) it.drop(1) else it }) to runs.last().readRows
                     } catch (e: ChException) {
                         error = e.message
@@ -736,8 +737,8 @@ class TrialService(
                     val (baseMs, baseRead) = replay(base)
                     val (candMs, candRead) = replay(cand)
                     // How ClickHouse plans the same query on each table: which indexes narrow it, and how far.
-                    val baseExplain = if (error == null) Explain.of(conn, pointedAt(base), "${trial.scratchDatabase}.${trial.baseTable}", settings = planning) else null
-                    val candExplain = if (error == null) Explain.of(conn, pointedAt(cand), "${trial.scratchDatabase}.${trial.candTable}", settings = planning) else null
+                    val baseExplain = if (error == null) Explain.of(conn, pointedAt(base), "${trial.scratchDatabase}.${trial.baseTable}", settings = planning, database = q.database) else null
+                    val candExplain = if (error == null) Explain.of(conn, pointedAt(cand), "${trial.scratchDatabase}.${trial.candTable}", settings = planning, database = q.database) else null
                     queryResults.add(
                         TrialQueryResult("Q${i + 1}", q.normalized, q.count.toDouble() / total, baseMs, candMs, baseRead, candRead, error, baseExplain, candExplain),
                     )

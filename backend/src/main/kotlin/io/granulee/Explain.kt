@@ -68,10 +68,11 @@ object Explain {
     fun of(
         ch: ChConnection, query: String, table: String? = null, pipeline: Boolean = true, settings: Map<String, String> = emptyMap(),
         projections: Set<String> = emptySet(),
+        database: String? = null, // the default database of the session that ran the query
     ): QueryExplain = try {
         val sql = clean(query)
         // actions = 1 adds the read type and the PREWHERE filter to the read steps.
-        val plan = ch.query("EXPLAIN json = 1, indexes = 1, actions = 1 $sql", settings).joinToString("\n") { it.str("explain") }
+        val plan = ch.query("EXPLAIN json = 1, indexes = 1, actions = 1 $sql", settings, database = database).joinToString("\n") { it.str("explain") }
         val reads = readNodes(mapper.readValue(plan, Any::class.java)).filter { table == null || it["Description"] == table || it["Description"] in projections }
         val steps = reads.flatMap { node ->
             (node["Indexes"] as? List<*>).orEmpty().filterIsInstance<Map<*, *>>().map { index ->
@@ -95,7 +96,7 @@ object Explain {
         var text: String? = null
         var streams: Int? = null
         if (pipeline) {
-            text = runCatching { ch.query("EXPLAIN PIPELINE $sql", settings).joinToString("\n") { it.str("explain") } }.getOrNull()
+            text = runCatching { ch.query("EXPLAIN PIPELINE $sql", settings, database = database).joinToString("\n") { it.str("explain") } }.getOrNull()
             streams = text?.let { Regex("MergeTree\\w*(?:\\([^)]*\\))?\\s*×\\s*(\\d+)").findAll(it).maxOfOrNull { m -> m.groupValues[1].toInt() } }
                 ?: text?.takeIf { it.contains("MergeTree") }?.let { 1 }
         }

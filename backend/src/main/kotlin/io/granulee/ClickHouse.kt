@@ -49,13 +49,17 @@ object Sql {
 /** One ClickHouse server, reached over HTTP(S) with client-v2. Results are read as JSONEachRow. */
 class ChConnection(private val client: Client, private val mapper: ObjectMapper) : AutoCloseable {
 
-    /** `session` names an HTTP session: statements that share it see each other's session state, one at a time. */
-    fun query(sql: String, settings: Map<String, String> = emptyMap(), session: String? = null): List<Row> {
+    /**
+     * `session` names an HTTP session: statements that share it see each other's session state, one at a time.
+     * `database` is the default database for table names the statement does not qualify.
+     */
+    fun query(sql: String, settings: Map<String, String> = emptyMap(), session: String? = null, database: String? = null): List<Row> {
         val qs = QuerySettings()
             .setFormat(ClickHouseFormat.JSONEachRow)
             .serverSetting("output_format_json_quote_64bit_integers", "0")
         settings.forEach { (k, v) -> qs.serverSetting(k, v) }
         if (session != null) qs.setSessionId(session)
+        if (!database.isNullOrBlank()) qs.setDatabase(database)
         return run(sql) {
             client.query(sql, qs).get().use { response ->
                 BufferedReader(InputStreamReader(response.inputStream, Charsets.UTF_8)).useLines { lines ->
@@ -70,11 +74,12 @@ class ChConnection(private val client: Client, private val mapper: ObjectMapper)
     fun first(sql: String): Row? = query(sql).firstOrNull()
 
     /** Runs a statement and throws its result away: DDL, INSERT … SELECT, or a SELECT that is only timed. */
-    fun exec(sql: String, settings: Map<String, String> = emptyMap(), queryId: String? = null, session: String? = null): ExecStats {
+    fun exec(sql: String, settings: Map<String, String> = emptyMap(), queryId: String? = null, session: String? = null, database: String? = null): ExecStats {
         val qs = QuerySettings().setFormat(ClickHouseFormat.Null).waitEndOfQuery(true)
         settings.forEach { (k, v) -> qs.serverSetting(k, v) }
         if (queryId != null) qs.setQueryId(queryId)
         if (session != null) qs.setSessionId(session)
+        if (!database.isNullOrBlank()) qs.setDatabase(database)
         return run(sql) {
             val started = System.nanoTime()
             client.query(sql, qs).get().use { response ->
