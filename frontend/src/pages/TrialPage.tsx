@@ -157,6 +157,56 @@ function PlanSide({ title, plan, run }: { title: string; plan: QueryExplain | nu
   );
 }
 
+/** "ORDER BY (…)" or "PARTITION BY …" of a trial table's CREATE statement. */
+function clauseOf(ddl: string, keyword: 'ORDER BY' | 'PARTITION BY'): string {
+  const line = ddl.split('\n').find((l) => l.startsWith(`${keyword} `));
+  return line ? line.slice(keyword.length + 1).trim() : '';
+}
+
+/**
+ * A new sorting or partition key stores every row somewhere else, so columns the trial did not touch change size too.
+ * This says so, and by how much, where it happened.
+ */
+function RowOrderNote({ result: r }: { result: TrialResult }) {
+  const order = [clauseOf(r.baseDdl, 'ORDER BY'), clauseOf(r.candDdl, 'ORDER BY')];
+  const partition = [clauseOf(r.baseDdl, 'PARTITION BY'), clauseOf(r.candDdl, 'PARTITION BY')];
+  const newOrder = order[0] !== order[1];
+  const newPartition = partition[0] !== partition[1];
+  if (!newOrder && !newPartition) return null;
+  // A column counts as moved when it changed by more than a rounding difference between two merges.
+  const untouched = r.columns.filter((c) => c.candidate == null && c.baseBytes > 0);
+  const grew = untouched.filter((c) => c.candBytes > c.baseBytes * 1.02);
+  const shrank = untouched.filter((c) => c.candBytes < c.baseBytes * 0.98);
+  if (!grew.length && !shrank.length) return null;
+  const sum = (list: typeof untouched) => list.reduce((a, c) => a + Math.abs(c.candBytes - c.baseBytes), 0);
+  const columns = (n: number) => `${fmtInt(n)} ${n === 1 ? 'column' : 'columns'}`;
+  const touched = r.columns.some((c) => c.candidate != null);
+  return (
+    <p className="g-notice" role="note">
+      {newOrder ? (
+        <>
+          The sorting key changes from <span className="g-mono">{order[0]}</span> to <span className="g-mono">{order[1]}</span>
+          {newPartition ? ', and the partition key changes too' : ''}.{' '}
+        </>
+      ) : (
+        <>
+          The partition key changes from <span className="g-mono">{partition[0] || 'none'}</span> to <span className="g-mono">{partition[1] || 'none'}</span>.{' '}
+        </>
+      )}
+      That stores the rows in a different order, and a column compresses by how alike its neighbouring values are. So columns this trial left as they are
+      change size as well:{' '}
+      {[
+        grew.length ? `${columns(grew.length)} grew by ${fmtBytes(sum(grew))}` : null,
+        shrank.length ? `${columns(shrank.length)} shrank by ${fmtBytes(sum(shrank))}` : null,
+      ]
+        .filter(Boolean)
+        .join(', ')}
+      . Columns that repeat along the old order lose most; those that follow the new one gain.
+      {touched ? ' For a column whose type or codec changed as well, this trial cannot tell the two effects apart.' : ''}
+    </p>
+  );
+}
+
 /** The fastest and the slowest of the runs behind a median. */
 function RunRange({ runs }: { runs: number[] }) {
   if (runs.length < 2) return null;
@@ -502,6 +552,7 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
             {hasScans ? ` · scan = median of ${trial.request.runsPerQuery} full reads` : ''}
           </span>
         </div>
+        <RowOrderNote result={r} />
         <BytesChart
           type="bar"
           title="Compressed size per column"
