@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.1](https://github.com/pixelweb-org/granulee/compare/v0.19.0...v0.19.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* word a trial's verdict from the same noise-aware outcomes as its figures ([17301cd](https://github.com/pixelweb-org/granulee/commit/17301cd4aad2a87a8da9f1fa88cc6b3081a92cb1))
+
 ## [0.19.0](https://github.com/pixelweb-org/granulee/compare/v0.18.1...v0.19.0) (2026-11-21)
 
 
