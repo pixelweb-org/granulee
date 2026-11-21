@@ -1,0 +1,67 @@
+Query summary:
+  Time:        56.18 ms (planning 35.52 ms · execution 20.66 ms)
+  Read:        3.20 million rows, 58.80 MB (154.90 million rows/s., 2.85 GB/s.)
+  Peak memory: 15.24 MiB
+
+Output: plan, count()
+
+Expression ((Project names + Projection))
+│  I/O: rows 3 → 3 · 70 B → 70 B
+│    time 959.00 ns (0.0%) · parallelism 0.96/1
+└──Aggregating
+   │  Keys: plan
+   │  Aggregates: count()
+   │  Skip merging: 0
+   │  I/O: rows 299.40 thousand → 3 (0.00%) · 299.92 KB → 70 B
+   │    Stage (partial aggregation): time 336.33 us (1.6%) · parallelism 4.49/12
+   │    Stage (final aggregation): time 22.75 us (0.1%) · parallelism 1.00/1
+   └──Expression (((Before GROUP BY + ) + Post Join Actions))
+      │  I/O: rows 299.40 thousand → 299.40 thousand · 299.92 KB → 299.92 KB
+      │    time 15.88 us (0.1%) · parallelism 0.94/12
+      └──Join (JOIN FillRightFirst)
+         │  e[300000] ⋈ u[200000]
+         │  Type: inner | Strictness: all | Algorithm: SpillingHashJoin(ConcurrentHashJoin)
+         │  Join conditions: user_id = user_id
+         │  Cost: estimated 301.41 thousand · actual 299.40 thousand
+         │  Selectivity: estimated (NDV) 5.024e-06 · actual (cartesian) 5e-06
+         │  Output rows: estimated 301.41 thousand · actual 299.40 thousand · q-error 1.01
+         │  Left: rows estimated 300.00 thousand · rows 299.40 thousand · matched 299.40 thousand · match rate 100.00% · fanout 1.00
+         │  Right: rows estimated 200.00 thousand · rows 200.00 thousand · matched not collected · match rate not collected · fanout not collected
+         │  Hash table: unique keys 200.00 thousand · memory 34.32 MB
+         │  Input (left): user_id
+         │  Input (right): user_id, plan
+         │  I/O: rows 499.40 thousand → 299.40 thousand (59.95%) · 4.20 MB → 299.92 KB
+         │    Stage (build): time 3.01 ms (14.6%) · parallelism 1.56/12
+         │    Stage (probe): time 2.53 ms (12.3%) · parallelism 6.24/12
+         ├──Expression (Left Pre Join Actions)
+         │  │  I/O: rows 299.40 thousand → 299.40 thousand · 2.40 MB → 2.40 MB
+         │  │    time 250.13 us (1.2%) · parallelism 0.83/12
+         │  └──Expression ((Apply runtime join filter + (WHERE + Change column names to column identifiers)))
+         │     │  I/O: rows 299.40 thousand → 299.40 thousand · 2.40 MB → 2.40 MB
+         │     │    time 373.58 us (1.8%) · parallelism 0.87/12
+         │     └──ReadFromMergeTree (analytics.events)
+         │           Read type: Default
+         │           Parts: 484 | Granules: 484
+         │           Output: user_id
+         │           Prewhere filter
+         │           Prewhere filter column:  country = 'DE'
+         │           Runtime filters: RF1(user_id, user_id from analytics.users)
+         │           I/O: rows 0 → 299.40 thousand · 0 B → 2.40 MB
+         │             time 10.79 ms (52.3%) · parallelism 11.16/12
+         └──Expression (Right Pre Join Actions)
+            │  I/O: rows 200.00 thousand → 200.00 thousand · 1.80 MB → 1.80 MB
+            │    time 6.75 us (0.0%) · parallelism 0.89/1
+            └──BuildRuntimeFilter (Build runtime join filter on user_id)
+               │  Filter id: RF1
+               │  Source table: analytics.users
+               │  I/O: rows 200.00 thousand → 200.00 thousand · 1.80 MB → 1.80 MB
+               │    time 1.68 ms (8.1%) · parallelism 1.00/1
+               └──Expression (Change column names to column identifiers)
+                  │  I/O: rows 200.00 thousand → 200.00 thousand · 1.80 MB → 1.80 MB
+                  │    time 10.79 us (0.1%) · parallelism 0.97/1
+                  └──ReadFromMergeTree (analytics.users)
+                        Read type: Default
+                        Parts: 1 | Granules: 24
+                        Output: plan, user_id
+                        I/O: rows 0 → 200.00 thousand · 0 B → 1.80 MB
+                          time 3.23 ms (15.6%) · parallelism 1.00/1

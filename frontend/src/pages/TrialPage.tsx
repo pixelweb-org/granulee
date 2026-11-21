@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { QueryExplain, Trial, TrialMetric, TrialResult } from '../api/types';
+import type { QueryAnalyze, QueryExplain, Trial, TrialMetric, TrialResult } from '../api/types';
 import { useApi, usePolling } from '../hooks/useApi';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
@@ -98,46 +98,141 @@ function NewIndexes({ trial, result }: { trial: Trial; result: TrialResult }) {
 }
 
 /** What EXPLAIN says about one replayed query on each table: every index that narrowed the read, and the read streams. */
-function QueryPlans({ base, cand }: { base: QueryExplain | null; cand: QueryExplain | null }) {
+function QueryPlans({
+  base,
+  cand,
+  baseRun,
+  candRun,
+}: {
+  base: QueryExplain | null;
+  cand: QueryExplain | null;
+  baseRun?: QueryAnalyze | null;
+  candRun?: QueryAnalyze | null;
+}) {
   const [open, setOpen] = useState(false);
+  const measured = Boolean(baseRun || candRun);
   return (
     <div className="stack" style={vars({ gap: 12 })}>
       <button type="button" className="cc-btn cc-btn--link" style={{ alignSelf: 'flex-start' }} aria-expanded={open} onClick={() => setOpen(!open)}>
-        {open ? 'Hide the plans' : 'Show how each table plans it'}
+        {open ? 'Hide the plans' : measured ? 'Show how each table plans and runs it' : 'Show how each table plans it'}
       </button>
       {open ? (
         <div className="grid-auto" style={vars({ min: 360, gap: 24 })}>
-          <PlanSide title="Baseline" plan={base} />
-          <PlanSide title="Candidate" plan={cand} />
+          <PlanSide title="Baseline" plan={base} run={baseRun} />
+          <PlanSide title="Candidate" plan={cand} run={candRun} />
         </div>
       ) : null}
     </div>
   );
 }
 
-function PlanSide({ title, plan }: { title: string; plan: QueryExplain | null }) {
-  if (!plan) return null;
+function PlanSide({ title, plan, run }: { title: string; plan: QueryExplain | null; run?: QueryAnalyze | null }) {
+  if (!plan && !run) return null;
   return (
     <div className="stack" style={vars({ gap: 8 })}>
       <p className="eyebrow">
         {title}
-        {plan.streams != null ? ` · ${plan.streams} read ${plan.streams === 1 ? 'stream' : 'streams'}` : ''}
+        {plan?.streams != null ? ` · ${plan.streams} read ${plan.streams === 1 ? 'stream' : 'streams'}` : ''}
       </p>
-      {plan.error ? (
+      {!plan ? null : plan.error ? (
         <p className="body-sm muted g-wrap">EXPLAIN failed: {plan.error}</p>
       ) : plan.steps.length ? (
         <PlanSteps steps={plan.steps} />
       ) : (
         <p className="body-sm muted">No index narrows this query: it reads every granule.</p>
       )}
-      {plan.error ? null : <ReadFacts plan={plan} />}
-      {plan.pipeline ? (
+      {!plan || plan.error ? null : <ReadFacts plan={plan} />}
+      {run ? <MeasuredRun run={run} /> : null}
+      {plan?.pipeline ? (
         <details>
           <summary className="body-sm g-act" style={{ cursor: 'pointer' }}>
             EXPLAIN PIPELINE
           </summary>
           <pre className="g-code" style={{ marginTop: 8 }}>
             {plan.pipeline}
+          </pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+/** One run measured with EXPLAIN ANALYZE: the totals, then the steps that took time or dropped rows. */
+function MeasuredRun({ run }: { run: QueryAnalyze }) {
+  if (run.error) return <p className="body-sm muted g-wrap">EXPLAIN ANALYZE failed: {run.error}</p>;
+  const busiest = run.steps.reduce((max, s) => Math.max(max, s.timeShare ?? 0), 0);
+  // An Expression that passes every row on in no time says nothing; the rest is the run.
+  const steps = run.steps.filter((s) => (s.timeShare ?? 0) >= 0.02 || (s.rowsIn != null && s.rowsOut != null && s.rowsIn !== s.rowsOut));
+  // Step times are often far below a millisecond on a sample.
+  const fine = (ms: number) => (ms < 0.1 ? `${Math.max(1, Math.round(ms * 1000))} µs` : fmtMs(ms));
+  const read = run.steps.filter((s) => s.name.startsWith('ReadFrom')).reduce<number | null>((sum, s) => (s.rowsOut == null ? sum : (sum ?? 0) + s.rowsOut), null);
+  return (
+    <div className="stack" style={vars({ gap: 8 })}>
+      <p className="body-sm muted">
+        Measured run: planning <span className="ink g-num">{fmtMs(run.planningMs)}</span>, execution <span className="ink g-num">{fmtMs(run.executionMs)}</span>
+        {run.peakMemoryBytes != null ? (
+          <>
+            , peak memory <span className="ink g-num">{fmtBytes(run.peakMemoryBytes)}</span>
+          </>
+        ) : null}
+        .
+        {run.readRows != null ? (
+          <>
+            {' '}
+            Read <span className="ink g-num">{fmtRows(run.readRows)}</span> rows
+            {read != null && read < run.readRows * 0.999 ? (
+              <>
+                , of which <span className="ink g-num">{fmtRows(read)}</span> passed the filter
+              </>
+            ) : null}
+            .
+          </>
+        ) : null}
+      </p>
+      {steps.length ? (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="g-tbl">
+            <thead>
+              <tr>
+                <th>Step</th>
+                <th className="r">Rows in → out</th>
+                <th className="r">Time · threads</th>
+              </tr>
+            </thead>
+            <tbody>
+              {steps.map((s, i) => (
+                <tr key={i} className={busiest > 0 && s.timeShare === busiest ? 'is-changed' : undefined}>
+                  <td>
+                    <span className="ink" style={{ fontWeight: 700 }}>
+                      {s.name.split(' (')[0]}
+                    </span>
+                    {s.name.includes(' (') ? <div className="g-mono g-wrap muted">{s.name.slice(s.name.indexOf(' (') + 2, -1)}</div> : null}
+                  </td>
+                  <td className="r nowrap">{s.rowsIn != null && s.rowsOut != null ? `${fmtRows(s.rowsIn)} → ${fmtRows(s.rowsOut)}` : '—'}</td>
+                  <td className="r nowrap">
+                    <span className={busiest > 0 && s.timeShare === busiest ? 'ink' : undefined} style={busiest > 0 && s.timeShare === busiest ? { fontWeight: 700 } : undefined}>
+                      {s.timeMs != null ? `${fine(s.timeMs)}${s.timeShare != null ? ` · ${fmtPct(s.timeShare, 0)}` : ''}` : '—'}
+                    </span>
+                    {s.threads != null ? (
+                      <div className="muted">
+                        {s.threads.toFixed(1)}
+                        {s.maxThreads != null ? ` of ${fmtInt(s.maxThreads)}` : ''} threads
+                      </div>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {run.text ? (
+        <details>
+          <summary className="body-sm g-act" style={{ cursor: 'pointer' }}>
+            EXPLAIN ANALYZE
+          </summary>
+          <pre className="g-code" style={{ marginTop: 8 }}>
+            {run.text}
           </pre>
         </details>
       ) : null}
@@ -558,7 +653,9 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
                         </span>
                       ) : null}
                     </div>
-                    {q.baseExplain || q.candExplain ? <QueryPlans base={q.baseExplain} cand={q.candExplain} /> : null}
+                    {q.baseExplain || q.candExplain || q.baseAnalyze || q.candAnalyze ? (
+                      <QueryPlans base={q.baseExplain} cand={q.candExplain} baseRun={q.baseAnalyze} candRun={q.candAnalyze} />
+                    ) : null}
                   </li>
                 );
               })}

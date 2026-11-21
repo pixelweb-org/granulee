@@ -35,7 +35,9 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
 - **Trials** build a baseline and a candidate table in a scratch database, copy the same sample of
   rows into both, merge them, and compare sizes, column scans, insert throughput and replayed queries.
   Each replayed query is also planned with `EXPLAIN` on both tables, so the result shows which indexes
-  narrowed it, the granules read and the read streams.
+  narrowed it, the granules read and the read streams. On servers that have `EXPLAIN ANALYZE` it is run
+  once more with it: the result then shows planning and execution time, peak memory, and for every step
+  the rows in and out, its share of the time and the threads at work.
   The result also shows the statements that would apply the candidate to the production table:
   `ALTER TABLE` for column, codec and index changes, a rebuild script when a key changes.
   "Apply to production" on a finished trial shows those statements again, computed against the table as

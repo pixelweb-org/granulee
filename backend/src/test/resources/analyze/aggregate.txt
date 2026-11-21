@@ -1,0 +1,44 @@
+Query summary:
+  Time:        10.22 ms (planning 7.60 ms · execution 2.62 ms)
+  Read:        507.76 thousand rows, 13.03 MB (193.99 million rows/s., 4.98 GB/s.)
+  Peak memory: 7.01 MiB
+
+Output: country, count()
+
+Expression (Project names)
+│  I/O: rows 5 → 5 · 95 B → 95 B
+│    time 1.00 us (0.0%) · parallelism 1.00/1
+└──Limit (preliminary LIMIT)
+   │  Limit 5
+   │  Offset 0
+   │  I/O: rows 5 → 5 · 95 B → 95 B
+   └──Sorting (Sorting for ORDER BY)
+      │  Sort description: count() DESC
+      │  Limit 5
+      │  I/O: rows 10 → 5 (50.00%) · 190 B → 95 B
+      │    Stage (sorting): time 41.58 us (1.6%) · parallelism 1.02/12
+      │    Stage (merge sorted streams): time 27.92 us (1.1%) · parallelism 0.99/1
+      └──Expression ((Before ORDER BY + Projection))
+         │  I/O: rows 10 → 10 · 190 B → 190 B
+         │    time 667.00 ns (0.0%) · parallelism 1.00/1
+         └──Aggregating
+            │  Keys: country
+            │  Aggregates: count()
+            │  Skip merging: 0
+            │  I/O: rows 13.47 thousand → 10 (0.07%) · 148.18 KB → 190 B
+            │    Stage (partial aggregation): time 386.63 us (14.8%) · parallelism 1.71/12
+            │    Stage (final aggregation): time 37.96 us (1.5%) · parallelism 1.00/1
+            └──Expression (Before GROUP BY)
+               │  I/O: rows 13.47 thousand → 13.47 thousand · 148.18 KB → 148.18 KB
+               │    time 31.37 us (1.2%) · parallelism 0.84/12
+               └──Expression ((WHERE + Change column names to column identifiers))
+                  │  I/O: rows 13.47 thousand → 13.47 thousand · 148.18 KB → 148.18 KB
+                  │    time 60.99 us (2.3%) · parallelism 0.92/12
+                  └──ReadFromMergeTree (analytics.events)
+                        Read type: Default
+                        Parts: 84 | Granules: 84
+                        Output: country
+                        Prewhere filter
+                        Prewhere filter column:  event_time >= '2026-11-01 06:08:04' AND event_type = 'event_3'
+                        I/O: rows 0 → 13.47 thousand · 0 B → 148.18 KB
+                          time 1.89 ms (72.3%) · parallelism 9.26/12

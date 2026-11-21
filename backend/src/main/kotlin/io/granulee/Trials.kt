@@ -719,6 +719,7 @@ class TrialService(
                 val total = (facts?.queryTotal ?: 0).coerceAtLeast(1)
                 val settings = Explain.uncached(conn) + mapOf("max_execution_time" to "120")
                 val planning = limits + Explain.planned(conn)
+                val measured = queries.isNotEmpty() && Analyze.supported(conn)
                 queries.forEachIndexed { i, q ->
                     var error: String? = null
                     // A logged query may name a Buffer table in front of the production table instead.
@@ -739,8 +740,14 @@ class TrialService(
                     // How ClickHouse plans the same query on each table: which indexes narrow it, and how far.
                     val baseExplain = if (error == null) Explain.of(conn, pointedAt(base), "${trial.scratchDatabase}.${trial.baseTable}", settings = planning, database = q.database) else null
                     val candExplain = if (error == null) Explain.of(conn, pointedAt(cand), "${trial.scratchDatabase}.${trial.candTable}", settings = planning, database = q.database) else null
+                    // One more run of each with EXPLAIN ANALYZE: which step took the time, and what it let through.
+                    val baseAnalyze = if (measured && error == null) Analyze.of(conn, pointedAt(base), limits + settings, q.database) else null
+                    val candAnalyze = if (measured && error == null) Analyze.of(conn, pointedAt(cand), limits + settings, q.database) else null
                     queryResults.add(
-                        TrialQueryResult("Q${i + 1}", q.normalized, q.count.toDouble() / total, baseMs, candMs, baseRead, candRead, error, baseExplain, candExplain),
+                        TrialQueryResult(
+                            "Q${i + 1}", q.normalized, q.count.toDouble() / total, baseMs, candMs, baseRead, candRead, error,
+                            baseExplain, candExplain, baseAnalyze, candAnalyze,
+                        ),
                     )
                     progress(85 + (i + 1) * 13 / queries.size)
                 }

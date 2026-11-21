@@ -332,6 +332,9 @@ data class TrialQueryResult(
     /** How the indexes narrowed the read on each table, from EXPLAIN. */
     val baseExplain: QueryExplain? = null,
     val candExplain: QueryExplain? = null,
+    /** One measured run on each table, from EXPLAIN ANALYZE: where the time went. Null where the server has none. */
+    val baseAnalyze: QueryAnalyze? = null,
+    val candAnalyze: QueryAnalyze? = null,
 )
 
 data class TrialResult(

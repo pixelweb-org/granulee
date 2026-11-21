@@ -345,6 +345,8 @@ export interface TrialQueryResult {
   baseReadRows: number | null;
   candReadRows: number | null;
   error: string | null;
+  baseAnalyze?: QueryAnalyze | null; // one measured run, from EXPLAIN ANALYZE; absent in trials run before 0.13
+  candAnalyze?: QueryAnalyze | null;
   baseExplain: QueryExplain | null; // how the indexes narrowed the read, from EXPLAIN
   candExplain: QueryExplain | null;
 }
@@ -385,6 +387,29 @@ export interface KeyUsage {
   granulesBefore: number;
   granulesAfter: number;
   queries: number[];
+}
+
+/** One step of a measured run: what went in, what came out, and how much of the run it took. */
+export interface AnalyzeStep {
+  name: string;
+  depth: number; // 0 hands out the result; the reads are deepest
+  rowsIn: number | null;
+  rowsOut: number | null;
+  timeMs: number | null;
+  timeShare: number | null; // of the execution time; steps run at the same time, so shares can exceed 1 in sum
+  threads: number | null; // average threads at work in its busiest stage
+  maxThreads: number | null;
+}
+
+/** What EXPLAIN ANALYZE measured for one query on one table. */
+export interface QueryAnalyze {
+  planningMs: number | null;
+  executionMs: number | null;
+  readRows: number | null;
+  peakMemoryBytes: number | null;
+  steps: AnalyzeStep[];
+  text: string | null;
+  error: string | null;
 }
 
 /** One logged query shape and how ClickHouse plans it on the production table now. */
