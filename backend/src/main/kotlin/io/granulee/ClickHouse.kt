@@ -37,7 +37,7 @@ fun Row.bool(key: String): Boolean = when (val v = this[key]) {
 
 class ChException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
 
-data class ExecStats(val readRows: Long, val writtenRows: Long, val elapsedMs: Double)
+data class ExecStats(val readRows: Long, val writtenRows: Long, val elapsedMs: Double, val queryId: String? = null)
 
 /** SQL identifier and literal quoting. */
 object Sql {
@@ -85,7 +85,7 @@ class ChConnection(private val client: Client, private val mapper: ObjectMapper)
             client.query(sql, qs).get().use { response ->
                 response.inputStream.use { it.readAllBytes() }
                 val wallMs = (System.nanoTime() - started) / 1e6
-                ExecStats(response.readRows, response.writtenRows, serverElapsedMs(response.responseHeaders) ?: wallMs)
+                ExecStats(response.readRows, response.writtenRows, serverElapsedMs(response.responseHeaders) ?: wallMs, queryId)
             }
         }
     }

@@ -335,7 +335,23 @@ data class TrialQueryResult(
     /** One measured run on each table, from EXPLAIN ANALYZE: where the time went. Null where the server has none. */
     val baseAnalyze: QueryAnalyze? = null,
     val candAnalyze: QueryAnalyze? = null,
-)
+    /** The runs baseMs and candMs are the medians of, in ms and in the order they ran. The warm-up run is not among them. */
+    val baseRuns: List<Double>? = null,
+    val candRuns: List<Double>? = null,
+    /** Median CPU time of those runs, summed over all threads, from query_log. Null where the log does not have them. */
+    val baseCpuMs: Double? = null,
+    val candCpuMs: Double? = null,
+) {
+    /**
+     * Whether the two medians tell the tables apart: no run of the faster table took as long as a run of the slower one.
+     * Short queries vary from run to run by more than many a candidate changes them.
+     */
+    fun clearDifference(): Boolean {
+        val b = baseRuns?.takeIf { it.isNotEmpty() } ?: return true
+        val c = candRuns?.takeIf { it.isNotEmpty() } ?: return true
+        return b.max() < c.min() || c.max() < b.min()
+    }
+}
 
 data class TrialResult(
     val rows: Long,

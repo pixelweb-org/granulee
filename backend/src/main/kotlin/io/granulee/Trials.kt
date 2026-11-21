@@ -720,23 +720,34 @@ class TrialService(
                 val settings = Explain.uncached(conn) + mapOf("max_execution_time" to "120")
                 val planning = limits + Explain.planned(conn)
                 val measured = queries.isNotEmpty() && Analyze.supported(conn)
+                val runIds = mutableListOf<Pair<List<String>, List<String>>>() // per query: the counted runs on each table
                 queries.forEachIndexed { i, q ->
                     var error: String? = null
                     // A logged query may name a Buffer table in front of the production table instead.
                     fun pointedAt(target: String) = facts?.buffers.orEmpty().fold(rewriteQuery(q.query, trial.database, trial.table, target)) { text, buffer ->
                         rewriteQuery(text, buffer.substringBefore('.'), buffer.substringAfter('.'), target)
                     }
-                    fun replay(target: String): Pair<Double?, Long?> = try {
-                        val sql = pointedAt(target)
-                        // The other tables of a logged query are looked up where the session that ran it had them.
-                        val runs = (1..request.runsPerQuery).map { exec(sql, settings, q.database) }
-                        median(runs.map { it.elapsedMs }.let { if (it.size >= 3) it.drop(1) else it }) to runs.last().readRows
+                    // The tables take turns run by run, so that whatever else the server does meanwhile hits both alike.
+                    // The other tables of a logged query are looked up where the session that ran it had them.
+                    val baseAll = mutableListOf<ExecStats>()
+                    val candAll = mutableListOf<ExecStats>()
+                    try {
+                        repeat(request.runsPerQuery) {
+                            baseAll.add(exec(pointedAt(base), settings, q.database))
+                            candAll.add(exec(pointedAt(cand), settings, q.database))
+                        }
                     } catch (e: ChException) {
                         error = e.message
-                        null to null
                     }
-                    val (baseMs, baseRead) = replay(base)
-                    val (candMs, candRead) = replay(cand)
+                    // The first run of three or more only warms up.
+                    fun counted(runs: List<ExecStats>) = if (error != null) emptyList() else if (runs.size >= 3) runs.drop(1) else runs
+                    val baseRuns = counted(baseAll)
+                    val candRuns = counted(candAll)
+                    val baseMs = median(baseRuns.map { it.elapsedMs })
+                    val candMs = median(candRuns.map { it.elapsedMs })
+                    val baseRead = baseRuns.lastOrNull()?.readRows
+                    val candRead = candRuns.lastOrNull()?.readRows
+                    runIds.add(baseRuns.mapNotNull { it.queryId } to candRuns.mapNotNull { it.queryId })
                     // How ClickHouse plans the same query on each table: which indexes narrow it, and how far.
                     val baseExplain = if (error == null) Explain.of(conn, pointedAt(base), "${trial.scratchDatabase}.${trial.baseTable}", settings = planning, database = q.database) else null
                     val candExplain = if (error == null) Explain.of(conn, pointedAt(cand), "${trial.scratchDatabase}.${trial.candTable}", settings = planning, database = q.database) else null
@@ -747,13 +758,24 @@ class TrialService(
                         TrialQueryResult(
                             "Q${i + 1}", q.normalized, q.count.toDouble() / total, baseMs, candMs, baseRead, candRead, error,
                             baseExplain, candExplain, baseAnalyze, candAnalyze,
+                            baseRuns.map { it.elapsedMs }.takeIf { it.isNotEmpty() }, candRuns.map { it.elapsedMs }.takeIf { it.isNotEmpty() },
                         ),
                     )
                     progress(85 + (i + 1) * 13 / queries.size)
                 }
+                // What the runs cost in CPU time is in query_log, once it is flushed.
+                if (queries.isNotEmpty()) {
+                    val cpu = cpuTimes(conn, id)
+                    fun medianCpu(ids: List<String>) = ids.mapNotNull { cpu[it] }.takeIf { it.size == ids.size && it.isNotEmpty() }?.let { median(it) }
+                    val withCpu = queryResults.mapIndexed { at, result ->
+                        result.copy(baseCpuMs = medianCpu(runIds[at].first), candCpuMs = medianCpu(runIds[at].second))
+                    }
+                    queryResults.clear()
+                    queryResults.addAll(withCpu)
+                }
                 say(
                     if (queries.isEmpty()) "No SELECTs for this table in query_log, so no queries were replayed"
-                    else "Replayed ${queries.size} queries × ${request.runsPerQuery} runs per table and read their plans with EXPLAIN",
+                    else "Replayed ${queries.size} queries × ${request.runsPerQuery} runs per table, taking turns, and read their plans with EXPLAIN",
                 )
             }
 
@@ -799,6 +821,24 @@ class TrialService(
         } finally {
             cancelled.remove(id)
         }
+    }
+
+    /**
+     * CPU time per statement of this trial, by query id, in ms over all threads. Empty where query_log is off or
+     * unreadable. Without the right to flush the logs, the server writes them on its own within a few seconds.
+     */
+    private fun cpuTimes(ch: ChConnection, trialId: String): Map<String, Double> = try {
+        if (runCatching { ch.exec("SYSTEM FLUSH LOGS") }.isFailure) Thread.sleep(8_000)
+        ch.query(
+            """
+            SELECT query_id, toFloat64(ProfileEvents['OSCPUVirtualTimeMicroseconds']) / 1000 AS cpu_ms
+            FROM system.query_log
+            WHERE event_date >= today() - 1 AND type = 'QueryFinish' AND startsWith(query_id, ${Sql.lit("granulee-$trialId-")})
+            """.trimIndent(),
+        ).associate { it.str("query_id") to it.double("cpu_ms") }
+    } catch (e: Exception) {
+        log.info("No CPU times for trial {}: {}", trialId, e.message)
+        emptyMap()
     }
 
     private fun seconds(ms: Double): String =
@@ -999,7 +1039,7 @@ class TrialService(
             baseMedian > candMedian -> String.format(Locale.US, "answers the median query %.1f× faster", baseMedian / candMedian)
             else -> String.format(Locale.US, "answers the median query %.1f× slower", candMedian / baseMedian)
         }
-        val slower = timed.filter { it.candMs!! > it.baseMs!! * 1.1 && it.candMs - it.baseMs > 1 }.sortedByDescending { it.share }
+        val slower = timed.filter { it.candMs!! > it.baseMs!! * 1.1 && it.candMs - it.baseMs > 1 && it.clearDifference() }.sortedByDescending { it.share }
         val tail = when (slower.size) {
             0 -> ""
             1 -> slower[0].let { String.format(Locale.US, " One query pattern gets slower: %s, %.0f ms → %.0f ms (%s of the workload).", it.label, it.baseMs, it.candMs, Fmt.percent(it.share)) }

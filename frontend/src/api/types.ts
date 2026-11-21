@@ -345,6 +345,10 @@ export interface TrialQueryResult {
   baseReadRows: number | null;
   candReadRows: number | null;
   error: string | null;
+  baseRuns?: number[] | null; // the runs baseMs is the median of, in ms; absent in trials run before 0.14
+  candRuns?: number[] | null;
+  baseCpuMs?: number | null; // median CPU time of those runs over all threads, from query_log
+  candCpuMs?: number | null;
   baseAnalyze?: QueryAnalyze | null; // one measured run, from EXPLAIN ANALYZE; absent in trials run before 0.13
   candAnalyze?: QueryAnalyze | null;
   baseExplain: QueryExplain | null; // how the indexes narrowed the read, from EXPLAIN

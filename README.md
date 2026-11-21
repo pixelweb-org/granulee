@@ -34,6 +34,9 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
   reads table data (ClickHouse builds the candidate in memory) and only runs when you ask for it.
 - **Trials** build a baseline and a candidate table in a scratch database, copy the same sample of
   rows into both, merge them, and compare sizes, column scans, insert throughput and replayed queries.
+  A replayed query runs several times on each table, the tables taking turns. The result shows the median,
+  the fastest and slowest run and the CPU time from `query_log`. Where the runs of the two tables overlap,
+  it says "no clear difference" instead of naming a factor.
   Each replayed query is also planned with `EXPLAIN` on both tables, so the result shows which indexes
   narrowed it, the granules read and the read streams. On servers that have `EXPLAIN ANALYZE` it is run
   once more with it: the result then shows planning and execution time, peak memory, and for every step

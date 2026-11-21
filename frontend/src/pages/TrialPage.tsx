@@ -157,6 +157,16 @@ function PlanSide({ title, plan, run }: { title: string; plan: QueryExplain | nu
   );
 }
 
+/** The fastest and the slowest of the runs behind a median. */
+function RunRange({ runs }: { runs: number[] }) {
+  if (runs.length < 2) return null;
+  return (
+    <span className="caption muted g-num">
+      {fmtMs(Math.min(...runs))} to {fmtMs(Math.max(...runs))} · {runs.length} runs
+    </span>
+  );
+}
+
 /** One run measured with EXPLAIN ANALYZE: the totals, then the steps that took time or dropped rows. */
 function MeasuredRun({ run }: { run: QueryAnalyze }) {
   if (run.error) return <p className="body-sm muted g-wrap">EXPLAIN ANALYZE failed: {run.error}</p>;
@@ -169,7 +179,8 @@ function MeasuredRun({ run }: { run: QueryAnalyze }) {
   return (
     <div className="stack" style={vars({ gap: 8 })}>
       <p className="body-sm muted">
-        Measured run: planning <span className="ink g-num">{fmtMs(run.planningMs)}</span>, execution <span className="ink g-num">{fmtMs(run.executionMs)}</span>
+        One more run, measured step by step: planning <span className="ink g-num">{fmtMs(run.planningMs)}</span>, execution{' '}
+        <span className="ink g-num">{fmtMs(run.executionMs)}</span>
         {run.peakMemoryBytes != null ? (
           <>
             , peak memory <span className="ink g-num">{fmtBytes(run.peakMemoryBytes)}</span>
@@ -188,6 +199,10 @@ function MeasuredRun({ run }: { run: QueryAnalyze }) {
             .
           </>
         ) : null}
+      </p>
+      <p className="caption muted">
+        This single run is not one of the timed runs above. A short query can take twice as long from one run to the next, so read the steps for where
+        the time goes, not for which table is faster.
       </p>
       {steps.length ? (
         <div style={{ overflowX: 'auto' }}>
@@ -604,7 +619,12 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
             <ol className="stack" style={{ listStyle: 'none', margin: 0, padding: 0, ...vars({ gap: 12 }) }}>
               {r.queries.map((q) => {
                 const speed = q.baseMs != null && q.candMs != null ? fmtSpeed(q.baseMs, q.candMs) : null;
-                const bad = !!speed && speed.slower && q.candMs! > q.baseMs! * 1.05;
+                // The medians only tell the tables apart when no run of one took as long as a run of the other.
+                const b = q.baseRuns ?? [];
+                const c = q.candRuns ?? [];
+                const overlap = b.length > 0 && c.length > 0 && Math.max(Math.min(...b), Math.min(...c)) <= Math.min(Math.max(...b), Math.max(...c));
+                const unclear = !!speed && !speed.same && overlap;
+                const bad = !!speed && !unclear && speed.slower && q.candMs! > q.baseMs! * 1.05;
                 return (
                   <li key={q.label} className={`card card-row${bad ? ' is-worse' : ''}`}>
                     <div className="row" style={{ alignItems: 'baseline', flexWrap: 'nowrap', ...vars({ gap: 12 }) }}>
@@ -622,11 +642,21 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
                         <div>
                           <dt className="eyebrow">Baseline</dt>
                           <dd>{fmtMs(q.baseMs)}</dd>
+                          <RunRange runs={b} />
                         </div>
                         <div>
                           <dt className="eyebrow">Candidate</dt>
                           <dd className="strong">{fmtMs(q.candMs)}</dd>
+                          <RunRange runs={c} />
                         </div>
+                        {q.baseCpuMs != null && q.candCpuMs != null ? (
+                          <div>
+                            <dt className="eyebrow">CPU time</dt>
+                            <dd>
+                              {fmtMs(q.baseCpuMs)} → {fmtMs(q.candCpuMs)}
+                            </dd>
+                          </div>
+                        ) : null}
                         <div>
                           <dt className="eyebrow">Rows read</dt>
                           <dd>{q.baseReadRows != null && q.candReadRows != null ? `${fmtRows(q.baseReadRows)} → ${fmtRows(q.candReadRows)}` : '—'}</dd>
@@ -648,8 +678,8 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
                         </span>
                       ) : speed ? (
                         <span className="status body-sm" style={{ fontWeight: 700 }}>
-                          <StatusDot tone={bad ? 'error' : speed.same ? 'muted' : 'success'} />
-                          {speed.text}
+                          <StatusDot tone={bad ? 'error' : speed.same || unclear ? 'muted' : 'success'} />
+                          {unclear ? 'no clear difference' : speed.text}
                         </span>
                       ) : null}
                     </div>
