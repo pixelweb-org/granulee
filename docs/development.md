@@ -8,8 +8,8 @@
 | `frontend/` | React 19, Vite, TypeScript. |
 | `frontend/src/api/types.ts` | The API contract. The backend's data classes mirror it field for field, each in the package of its feature. |
 | `dev/` | Scripts behind the `make` targets; `dev/seed.sh` fills a local ClickHouse with sample data that has findings. |
-| `deploy/compose.yaml` | A Compose file to run it. |
-| `Dockerfile` | Builds the image from source with nothing but Docker. |
+| `deploy/compose.yaml` | A Compose file to run the published image. |
+| `Dockerfile` | Builds the image from a checkout with nothing but Docker. |
 
 Granulee keeps its own state as JSON files in `backend/data/` (override with `GRANULEE_DATA_DIR`):
 sources, the last scan per source, size history, dismissed recommendations and trials. ClickHouse
@@ -95,10 +95,15 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org). On e
 and bumps `version.txt` and `CHANGELOG.md`. Merging that PR tags `vX.Y.Z` and creates the GitHub release.
 
 The `Build image` workflow tests every push to `main`. For a release tag it also builds the image with
-Jib, with the frontend inside, and pushes it to the registry named in the repository variable
-`IMAGE_REPOSITORY`, tagged `latest`, the version and the short commit. It reads the registry login from
-`NEXUS_USERNAME` / `NEXUS_PASSWORD` in the runner's environment. Both workflows only run in this
-repository, not in forks.
+Jib, with the frontend inside, tagged `latest`, the version and the short commit, and pushes it twice, in
+two jobs that do not depend on each other:
+
+- to **`ghcr.io/pixelweb-org/granulee`**, the public image, for amd64 and arm64. This job runs on a
+  GitHub-hosted runner and logs in with the workflow's own token.
+- to the registry named in the repository variable `IMAGE_REPOSITORY`, from the project's own runner,
+  which has `NEXUS_USERNAME` / `NEXUS_PASSWORD` in its environment.
+
+The release workflows only run in this repository, not in forks.
 
 ### Branch protection
 

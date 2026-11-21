@@ -37,17 +37,18 @@ single statement touches the production table.
 
 ## Quick start
 
-You need Docker. This builds Granulee from source and starts it on http://localhost:8080:
+You need Docker. This starts Granulee on http://localhost:8080:
 
 ```bash
-git clone https://github.com/pixelweb-org/granulee.git
-cd granulee
-docker build -t granulee .
-docker run -d --name granulee -p 8080:8080 -v granulee-data:/data granulee
+docker run -d --name granulee -p 127.0.0.1:8080:8080 -v granulee-data:/data ghcr.io/pixelweb-org/granulee:latest
 ```
 
 Open http://localhost:8080, go to **Data sources** and add your ClickHouse server (HTTP or HTTPS
 endpoint, user, password). The first scan starts right away.
+
+The image is built for amd64 and arm64. Every release is also tagged with its version, such as
+`ghcr.io/pixelweb-org/granulee:0.19.4`. To build it from a checkout instead, see
+[Running Granulee](docs/running.md).
 
 Granulee has **no login of its own**. Run it where only you can reach it; see
 [Running Granulee](docs/running.md#security).

@@ -62,6 +62,8 @@ if (project.hasProperty("withFrontend")) {
 // `./gradlew jib -PwithFrontend -Djib.to.image=registry.example.com/granulee` pushes it, logging in with
 // REGISTRY_USERNAME / REGISTRY_PASSWORD when set. Tags: -Djib.to.tags=a,b. A plain-HTTP registry also
 // needs -Djib.allowInsecureRegistries=true -DsendCredentialsOverHttp=true.
+// The image is for the builder's platform unless -Djib.from.platforms=linux/amd64,linux/arm64 names others;
+// more than one only works for a push, not for the local Docker daemon.
 jib {
     from {
         image = "eclipse-temurin:21-jre"
@@ -79,6 +81,14 @@ jib {
         ports = listOf("8080")
         volumes = listOf("/data")
         environment = mapOf("GRANULEE_DATA_DIR" to "/data")
+        // What a registry shows next to the image, and what links it to this repository on ghcr.io.
+        labels = mapOf(
+            "org.opencontainers.image.title" to "Granulee",
+            "org.opencontainers.image.description" to "Finds storage and schema improvements on ClickHouse servers and measures them on a sample before you apply them.",
+            "org.opencontainers.image.source" to "https://github.com/pixelweb-org/granulee",
+            "org.opencontainers.image.licenses" to "MIT",
+            "org.opencontainers.image.version" to project.version.toString(),
+        )
         jvmFlags = listOf("-XX:MaxRAMPercentage=75")
         creationTime = "USE_CURRENT_TIMESTAMP"
     }
