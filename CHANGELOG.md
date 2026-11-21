@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.19.2](https://github.com/pixelweb-org/granulee/compare/v0.19.1...v0.19.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* build trial tables with the production engine so FINAL queries replay ([1dbdee0](https://github.com/pixelweb-org/granulee/commit/1dbdee00b8db78fa8f972c312f25425b9cb41a55))
+
+
+### Code Refactoring
+
+* split the backend into feature packages ([bc4f22b](https://github.com/pixelweb-org/granulee/commit/bc4f22b7b0fd68f93f600c253e785375994816a1))
+
 ## [0.19.1](https://github.com/pixelweb-org/granulee/compare/v0.19.0...v0.19.1) (2026-11-21)
 
 
