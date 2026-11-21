@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/pixelweb-org/granulee/compare/v0.18.0...v0.18.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* let a trial start without schema changes when it has something else to measure ([72e82f8](https://github.com/pixelweb-org/granulee/commit/72e82f8e0db94ffa6a57fd3bdf6a1d2dc96d762e))
+
 ## [0.18.0](https://github.com/pixelweb-org/granulee/compare/v0.17.0...v0.18.0) (2026-11-21)
 
 
