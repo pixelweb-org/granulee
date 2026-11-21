@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/pixelweb-org/granulee/compare/v0.13.0...v0.14.0) (2026-11-21)
+
+
+### Features
+
+* show how far a trial's query runs spread before naming a winner ([1af99f5](https://github.com/pixelweb-org/granulee/commit/1af99f5d821323bfba18832afcf9006804bc51cb))
+
 ## [0.13.0](https://github.com/pixelweb-org/granulee/compare/v0.12.1...v0.13.0) (2026-11-21)
 
 
