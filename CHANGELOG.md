@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/pixelweb-org/granulee/compare/v0.11.0...v0.12.0) (2026-11-21)
+
+
+### Features
+
+* let ClickHouse say what a logged query filters on ([14d92e6](https://github.com/pixelweb-org/granulee/commit/14d92e62dda4c857d5c4219eb5fb156dc8fb5f5f))
+
 ## [0.11.0](https://github.com/pixelweb-org/granulee/compare/v0.10.0...v0.11.0) (2026-11-21)
 
 
