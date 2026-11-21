@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/pixelweb-org/granulee/compare/v0.15.0...v0.16.0) (2026-11-21)
+
+
+### Features
+
+* split the trial report into tabs and draw the replayed queries ([9619222](https://github.com/pixelweb-org/granulee/commit/96192228921bb4aa713fbfcd508bdf8a5cc76937))
+
 ## [0.15.0](https://github.com/pixelweb-org/granulee/compare/v0.14.0...v0.15.0) (2026-11-21)
 
 
