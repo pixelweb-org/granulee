@@ -30,6 +30,7 @@ export function App() {
         <Route path="trials" element={<TrialsPage />} />
         <Route path="trials/new" element={<TrialSetupPage />} />
         <Route path="trials/:id" element={<TrialPage />} />
+        <Route path="trials/:id/:tab" element={<TrialPage />} />
         <Route path="sources" element={<SourcesPage />} />
         <Route
           path="*"

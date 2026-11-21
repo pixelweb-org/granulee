@@ -11,6 +11,8 @@ const STEP_KIND: Record<IndexStep['kind'], string> = {
 
 /** The index steps of one plan, in the order ClickHouse applied them. `highlight` marks one skip index by name. */
 export function PlanSteps({ steps, highlight }: { steps: IndexStep[]; highlight?: string }) {
+  // Everything the table has, before any index: what the bars under the granules are a share of.
+  const total = steps[0]?.granulesBefore ?? 0;
   return (
     <table className="g-tbl">
       <thead>
@@ -36,6 +38,11 @@ export function PlanSteps({ steps, highlight }: { steps: IndexStep[]; highlight?
             </td>
             <td className={`r nowrap${s.granulesAfter < s.granulesBefore ? ' g-strong' : ''}`}>
               {fmtInt(s.granulesBefore)} → {fmtInt(s.granulesAfter)}
+              {total > 0 ? (
+                <div className="g-track q-share" title={`${fmtInt(s.granulesAfter)} of ${fmtInt(total)} granules left`}>
+                  <div className="g-fill" style={{ width: `${Math.min(100, (s.granulesAfter / total) * 100)}%` }} />
+                </div>
+              ) : null}
             </td>
           </tr>
         ))}

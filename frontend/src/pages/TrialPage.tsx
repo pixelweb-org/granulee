@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { QueryAnalyze, QueryExplain, Trial, TrialMetric, TrialResult } from '../api/types';
+import type { Trial, TrialMetric, TrialResult } from '../api/types';
 import { useApi, usePolling } from '../hooks/useApi';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
@@ -9,9 +9,9 @@ import { BytesChart } from '../components/BytesChart';
 import { Chart } from '../components/Chart';
 import { CodeBlock } from '../components/CodeBlock';
 import { PageHeader } from '../components/PageHeader';
-import { PlanSteps, ReadFacts } from '../components/PlanSteps';
 import { ErrorState, Loading } from '../components/States';
-import { Status, StatusDot, type Tone } from '../components/StatusDot';
+import { Status, type Tone } from '../components/StatusDot';
+import { TrialQueries } from '../components/TrialQueries';
 import { ApplyTrialDialog, OptimizeTrialDialog, RemoveTrialDialog, TrialProgressCard, trialTone, useRemoveTrial } from '../components/TrialParts';
 import {
   fmtBytes,
@@ -22,140 +22,14 @@ import {
   fmtInt,
   fmtMs,
   fmtMsPair,
-  fmtPct,
   fmtRatio,
   fmtRatioValue,
   fmtRows,
   fmtSignedBytes,
-  fmtSpeed,
   fmtTime,
 } from '../lib/format';
+import { routes } from '../lib/routes';
 import { vars } from '../lib/style';
-
-/** Did the skip indexes this trial added prune anything? Summed over the replayed queries' plans on the candidate. */
-function NewIndexes({ trial, result }: { trial: Trial; result: TrialResult }) {
-  const added = trial.request.addIndexes ?? [];
-  if (!added.length) return null;
-  if (!result.queries.some((q) => q.candExplain)) {
-    return (
-      <p className="g-notice">
-        This trial added {added.map((i) => i.name).join(', ')}, but no query was replayed, so nothing shows whether {added.length === 1 ? 'it prunes' : 'they prune'}.
-        Replaying needs SELECTs on this table in query_log and the replay option switched on in the trial setup.
-      </p>
-    );
-  }
-  const rows = added.map((index) => {
-    const used = result.queries.flatMap((q) => (q.candExplain?.steps ?? []).filter((s) => s.kind === 'skip' && s.name === index.name).map((s) => ({ q, s })));
-    const before = used.reduce((a, u) => a + u.s.granulesBefore, 0);
-    const after = used.reduce((a, u) => a + u.s.granulesAfter, 0);
-    return { index, queries: used.map((u) => u.q.label), share: used.reduce((a, u) => a + u.q.share, 0), before, after, dropped: before > 0 ? 1 - after / before : 0 };
-  });
-  return (
-    <div className="stack" style={vars({ gap: 8 })}>
-      <h3 className="subhead">Do the new skip indexes prune?</h3>
-      <Card table>
-        <table className="g-tbl">
-          <thead>
-            <tr>
-              <th>Index</th>
-              <th>Type</th>
-              <th>Used by</th>
-              <th className="r">Granules in → out</th>
-              <th style={{ width: '20%' }}>Granules dropped</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(({ index, queries, share, before, after, dropped }) => (
-              <tr key={index.name}>
-                <td className="g-strong">{index.name}</td>
-                <td className="g-mono">{index.type}</td>
-                <td>{queries.length ? `${queries.join(', ')} · ${fmtPct(share, 0)} of the workload` : 'no replayed query'}</td>
-                <td className="r nowrap">{queries.length ? `${fmtInt(before)} → ${fmtInt(after)}` : '—'}</td>
-                <td>
-                  {queries.length ? (
-                    <div className="share">
-                      <div className="g-track">
-                        <div className="g-fill" style={{ width: `${Math.min(100, dropped * 100)}%` }} />
-                      </div>
-                      <span className="g-num ink" style={{ width: 36, textAlign: 'right' }}>
-                        {fmtPct(dropped, 0)}
-                      </span>
-                    </div>
-                  ) : (
-                    '—'
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
-      <p className="caption muted">
-        From EXPLAIN on the candidate, summed over the replayed queries. An index that drops nothing costs insert time and disk for no gain on this sample.
-      </p>
-    </div>
-  );
-}
-
-/** What EXPLAIN says about one replayed query on each table: every index that narrowed the read, and the read streams. */
-function QueryPlans({
-  base,
-  cand,
-  baseRun,
-  candRun,
-}: {
-  base: QueryExplain | null;
-  cand: QueryExplain | null;
-  baseRun?: QueryAnalyze | null;
-  candRun?: QueryAnalyze | null;
-}) {
-  const [open, setOpen] = useState(false);
-  const measured = Boolean(baseRun || candRun);
-  return (
-    <div className="stack" style={vars({ gap: 12 })}>
-      <button type="button" className="cc-btn cc-btn--link" style={{ alignSelf: 'flex-start' }} aria-expanded={open} onClick={() => setOpen(!open)}>
-        {open ? 'Hide the plans' : measured ? 'Show how each table plans and runs it' : 'Show how each table plans it'}
-      </button>
-      {open ? (
-        <div className="grid-auto" style={vars({ min: 360, gap: 24 })}>
-          <PlanSide title="Baseline" plan={base} run={baseRun} />
-          <PlanSide title="Candidate" plan={cand} run={candRun} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function PlanSide({ title, plan, run }: { title: string; plan: QueryExplain | null; run?: QueryAnalyze | null }) {
-  if (!plan && !run) return null;
-  return (
-    <div className="stack" style={vars({ gap: 8 })}>
-      <p className="eyebrow">
-        {title}
-        {plan?.streams != null ? ` · ${plan.streams} read ${plan.streams === 1 ? 'stream' : 'streams'}` : ''}
-      </p>
-      {!plan ? null : plan.error ? (
-        <p className="body-sm muted g-wrap">EXPLAIN failed: {plan.error}</p>
-      ) : plan.steps.length ? (
-        <PlanSteps steps={plan.steps} />
-      ) : (
-        <p className="body-sm muted">No index narrows this query: it reads every granule.</p>
-      )}
-      {!plan || plan.error ? null : <ReadFacts plan={plan} />}
-      {run ? <MeasuredRun run={run} /> : null}
-      {plan?.pipeline ? (
-        <details>
-          <summary className="body-sm g-act" style={{ cursor: 'pointer' }}>
-            EXPLAIN PIPELINE
-          </summary>
-          <pre className="g-code" style={{ marginTop: 8 }}>
-            {plan.pipeline}
-          </pre>
-        </details>
-      ) : null}
-    </div>
-  );
-}
 
 /** "ORDER BY (…)" or "PARTITION BY …" of a trial table's CREATE statement. */
 function clauseOf(ddl: string, keyword: 'ORDER BY' | 'PARTITION BY'): string {
@@ -207,104 +81,6 @@ function RowOrderNote({ result: r }: { result: TrialResult }) {
   );
 }
 
-/** The fastest and the slowest of the runs behind a median. */
-function RunRange({ runs }: { runs: number[] }) {
-  if (runs.length < 2) return null;
-  return (
-    <span className="caption muted g-num">
-      {fmtMs(Math.min(...runs))} to {fmtMs(Math.max(...runs))} · {runs.length} runs
-    </span>
-  );
-}
-
-/** One run measured with EXPLAIN ANALYZE: the totals, then the steps that took time or dropped rows. */
-function MeasuredRun({ run }: { run: QueryAnalyze }) {
-  if (run.error) return <p className="body-sm muted g-wrap">EXPLAIN ANALYZE failed: {run.error}</p>;
-  const busiest = run.steps.reduce((max, s) => Math.max(max, s.timeShare ?? 0), 0);
-  // An Expression that passes every row on in no time says nothing; the rest is the run.
-  const steps = run.steps.filter((s) => (s.timeShare ?? 0) >= 0.02 || (s.rowsIn != null && s.rowsOut != null && s.rowsIn !== s.rowsOut));
-  // Step times are often far below a millisecond on a sample.
-  const fine = (ms: number) => (ms < 0.1 ? `${Math.max(1, Math.round(ms * 1000))} µs` : fmtMs(ms));
-  const read = run.steps.filter((s) => s.name.startsWith('ReadFrom')).reduce<number | null>((sum, s) => (s.rowsOut == null ? sum : (sum ?? 0) + s.rowsOut), null);
-  return (
-    <div className="stack" style={vars({ gap: 8 })}>
-      <p className="body-sm muted">
-        One more run, measured step by step: planning <span className="ink g-num">{fmtMs(run.planningMs)}</span>, execution{' '}
-        <span className="ink g-num">{fmtMs(run.executionMs)}</span>
-        {run.peakMemoryBytes != null ? (
-          <>
-            , peak memory <span className="ink g-num">{fmtBytes(run.peakMemoryBytes)}</span>
-          </>
-        ) : null}
-        .
-        {run.readRows != null ? (
-          <>
-            {' '}
-            Read <span className="ink g-num">{fmtRows(run.readRows)}</span> rows
-            {read != null && read < run.readRows * 0.999 ? (
-              <>
-                , of which <span className="ink g-num">{fmtRows(read)}</span> passed the filter
-              </>
-            ) : null}
-            .
-          </>
-        ) : null}
-      </p>
-      <p className="caption muted">
-        This single run is not one of the timed runs above. A short query can take twice as long from one run to the next, so read the steps for where
-        the time goes, not for which table is faster.
-      </p>
-      {steps.length ? (
-        <div style={{ overflowX: 'auto' }}>
-          <table className="g-tbl">
-            <thead>
-              <tr>
-                <th>Step</th>
-                <th className="r">Rows in → out</th>
-                <th className="r">Time · threads</th>
-              </tr>
-            </thead>
-            <tbody>
-              {steps.map((s, i) => (
-                <tr key={i} className={busiest > 0 && s.timeShare === busiest ? 'is-changed' : undefined}>
-                  <td>
-                    <span className="ink" style={{ fontWeight: 700 }}>
-                      {s.name.split(' (')[0]}
-                    </span>
-                    {s.name.includes(' (') ? <div className="g-mono g-wrap muted">{s.name.slice(s.name.indexOf(' (') + 2, -1)}</div> : null}
-                  </td>
-                  <td className="r nowrap">{s.rowsIn != null && s.rowsOut != null ? `${fmtRows(s.rowsIn)} → ${fmtRows(s.rowsOut)}` : '—'}</td>
-                  <td className="r nowrap">
-                    <span className={busiest > 0 && s.timeShare === busiest ? 'ink' : undefined} style={busiest > 0 && s.timeShare === busiest ? { fontWeight: 700 } : undefined}>
-                      {s.timeMs != null ? `${fine(s.timeMs)}${s.timeShare != null ? ` · ${fmtPct(s.timeShare, 0)}` : ''}` : '—'}
-                    </span>
-                    {s.threads != null ? (
-                      <div className="muted">
-                        {s.threads.toFixed(1)}
-                        {s.maxThreads != null ? ` of ${fmtInt(s.maxThreads)}` : ''} threads
-                      </div>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
-      {run.text ? (
-        <details>
-          <summary className="body-sm g-act" style={{ cursor: 'pointer' }}>
-            EXPLAIN ANALYZE
-          </summary>
-          <pre className="g-code" style={{ marginTop: 8 }}>
-            {run.text}
-          </pre>
-        </details>
-      ) : null}
-    </div>
-  );
-}
-
 function metricValue(m: TrialMetric): string {
   switch (m.unit) {
     case 'bytes':
@@ -331,7 +107,8 @@ function metricVerdict(m: TrialMetric): { tone: Tone; text: string } {
 }
 
 export function TrialPage() {
-  const { id = '' } = useParams();
+  const { id = '', tab: tabParam } = useParams();
+  const tab: Tab = TABS.includes(tabParam as Tab) ? (tabParam as Tab) : 'summary';
   const navigate = useNavigate();
   const { data: trial, error, reload } = useApi(() => api.trial(id), [id]);
   const [removing, setRemoving] = useRemoveTrial();
@@ -391,6 +168,23 @@ export function TrialPage() {
           )
         }
       />
+
+      {done ? (
+        <nav className="g-tabs" aria-label="Trial sections" style={{ marginTop: -8 }}>
+          <Link to={routes.trial(trial.id)} aria-current={tab === 'summary' ? 'page' : undefined}>
+            Summary
+          </Link>
+          <Link to={routes.trial(trial.id, 'columns')} aria-current={tab === 'columns' ? 'page' : undefined}>
+            Columns <span className="g-count g-num">{fmtInt(r.columns.length)}</span>
+          </Link>
+          <Link to={routes.trial(trial.id, 'queries')} aria-current={tab === 'queries' ? 'page' : undefined}>
+            Queries <span className="g-count g-num">{fmtInt(r.queries.length)}</span>
+          </Link>
+          <Link to={routes.trial(trial.id, 'schema')} aria-current={tab === 'schema' ? 'page' : undefined}>
+            Schema
+          </Link>
+        </nav>
+      ) : null}
 
       {trial.apply ? (
         <Card as="section" style={{ gap: 8, alignItems: 'flex-start' }}>
@@ -452,9 +246,12 @@ export function TrialPage() {
         </Card>
       ) : null}
 
-      {done ? <Result trial={trial} result={r} /> : null}
+      {done && tab === 'summary' ? <Summary trial={trial} result={r} /> : null}
+      {done && tab === 'columns' ? <Columns trial={trial} result={r} /> : null}
+      {done && tab === 'queries' ? <TrialQueries trial={trial} result={r} /> : null}
+      {done && tab === 'schema' ? <Schema trial={trial} result={r} /> : null}
 
-      {trial.log.length ? (
+      {trial.log.length && (!done || tab === 'summary') ? (
         <Card as="section" style={{ gap: 12 }}>
           <h2 className="subhead">Run log</h2>
           <ol className="body-sm g-num muted stack" style={{ margin: 0, paddingLeft: 20, ...vars({ gap: 6 }) }}>
@@ -501,18 +298,53 @@ export function TrialPage() {
   );
 }
 
-function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
-  const cols = r.columns;
-  const totalBase = cols.reduce((a, c) => a + c.baseBytes, 0);
-  const totalCand = cols.reduce((a, c) => a + c.candBytes, 0);
-  const totalBaseUnc = cols.reduce((a, c) => a + c.baseUncompressedBytes, 0);
-  const totalCandUnc = cols.reduce((a, c) => a + c.candUncompressedBytes, 0);
-  const hasScans = cols.some((c) => c.baseScanMs != null && c.candScanMs != null);
-  const scanCols = cols.filter((c) => c.candidate != null && c.baseScanMs != null && c.candScanMs != null);
-  const measured = r.queries.filter((q) => q.baseMs != null && q.candMs != null);
-  const top = measured.slice(0, 6);
-  const delta = r.projectedCandBytes - r.projectedBaseBytes;
+const TABS = ['summary', 'columns', 'queries', 'schema'] as const;
+type Tab = (typeof TABS)[number];
 
+/** What the candidate does differently from the baseline: keys, columns, indexes. */
+function Changes({ trial, result: r }: { trial: Trial; result: TrialResult }) {
+  const order = [clauseOf(r.baseDdl, 'ORDER BY'), clauseOf(r.candDdl, 'ORDER BY')];
+  const partition = [clauseOf(r.baseDdl, 'PARTITION BY'), clauseOf(r.candDdl, 'PARTITION BY')];
+  const columns = r.columns.filter((c) => c.candidate != null);
+  const added = trial.request.addIndexes ?? [];
+  const dropped = trial.request.dropIndexes ?? [];
+  const rows: { what: string; from: string; to: string }[] = [];
+  if (order[0] !== order[1]) rows.push({ what: 'Sorting key', from: order[0], to: order[1] });
+  if (partition[0] !== partition[1]) rows.push({ what: 'Partition key', from: partition[0] || 'none', to: partition[1] || 'none' });
+  columns.forEach((c) => rows.push({ what: `Column ${c.name}`, from: c.baseline, to: c.candidate! }));
+  added.forEach((i) => rows.push({ what: `Skip index ${i.name}`, from: 'none', to: `${i.type} on ${i.expression}, granularity ${i.granularity}` }));
+  dropped.forEach((name) => rows.push({ what: `Skip index ${name}`, from: 'exists', to: 'dropped' }));
+  if (!rows.length) return null;
+  return (
+    <section className="stack">
+      <h2 className="card-title">What the candidate changes</h2>
+      <Card table>
+        <table className="g-tbl">
+          <thead>
+            <tr>
+              <th>Change</th>
+              <th>Baseline</th>
+              <th>Candidate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.what}>
+                <td className="g-strong">{row.what}</td>
+                <td className="g-mono g-wrap">{row.from}</td>
+                <td className="g-mono g-wrap ink">{row.to}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </section>
+  );
+}
+
+/** The outcome at a glance: the verdict, every measure side by side and what was changed. */
+function Summary({ trial, result: r }: { trial: Trial; result: TrialResult }) {
+  const delta = r.projectedCandBytes - r.projectedBaseBytes;
   return (
     <>
       <section className="band">
@@ -544,15 +376,24 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
         </section>
       ) : null}
 
-      <section className="stack">
-        <div className="between">
-          <h2 className="card-title">Columns side by side</h2>
-          <span className="caption muted">
-            Sizes from system.columns{trial.request.optimizeFinal ? ' after full merge' : ''}
-            {hasScans ? ` · scan = median of ${trial.request.runsPerQuery} full reads` : ''}
-          </span>
-        </div>
-        <RowOrderNote result={r} />
+      <Changes trial={trial} result={r} />
+    </>
+  );
+}
+
+/** Every column on both tables: size, compression and, where measured, the time of a full read. */
+function Columns({ trial, result: r }: { trial: Trial; result: TrialResult }) {
+  const cols = r.columns;
+  const totalBase = cols.reduce((a, c) => a + c.baseBytes, 0);
+  const totalCand = cols.reduce((a, c) => a + c.candBytes, 0);
+  const totalBaseUnc = cols.reduce((a, c) => a + c.baseUncompressedBytes, 0);
+  const totalCandUnc = cols.reduce((a, c) => a + c.candUncompressedBytes, 0);
+  const hasScans = cols.some((c) => c.baseScanMs != null && c.candScanMs != null);
+  const scanCols = cols.filter((c) => c.candidate != null && c.baseScanMs != null && c.candScanMs != null);
+  return (
+    <>
+      <RowOrderNote result={r} />
+      <section className="grid-auto" style={vars({ min: 420, gap: 24 })}>
         <BytesChart
           type="bar"
           title="Compressed size per column"
@@ -565,6 +406,30 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
           ]}
           height={240}
         />
+        {scanCols.length ? (
+          <Chart
+            type="bar"
+            title="Scan time, changed columns"
+            subtitle={`Median of ${trial.request.runsPerQuery} full reads`}
+            categoryLabel="Column"
+            categories={scanCols.map((c) => c.name)}
+            series={[
+              { name: 'Baseline', values: scanCols.map((c) => c.baseScanMs ?? 0) },
+              { name: 'Candidate', values: scanCols.map((c) => c.candScanMs ?? 0) },
+            ]}
+            format={fmtMs}
+            height={240}
+          />
+        ) : null}
+      </section>
+      <section className="stack">
+        <div className="between">
+          <h2 className="card-title">Columns side by side</h2>
+          <span className="caption muted">
+            Sizes from system.columns{trial.request.optimizeFinal ? ' after full merge' : ''}
+            {hasScans ? ` · scan = median of ${trial.request.runsPerQuery} full reads` : ''}
+          </span>
+        </div>
         <Card table>
           <table className="g-tbl">
             <thead>
@@ -625,138 +490,30 @@ function Result({ trial, result: r }: { trial: Trial; result: TrialResult }) {
             </tbody>
           </table>
         </Card>
-        <p className="caption muted">Highlighted rows were changed in this trial. Unchanged columns can still move when the sorting key reorders rows.</p>
+        <p className="caption muted">Highlighted rows were changed in this trial.</p>
       </section>
+    </>
+  );
+}
 
-      {!r.queries.length ? <NewIndexes trial={trial} result={r} /> : null}
-
-      {r.queries.length || scanCols.length ? (
-        <section className="stack">
-          <h2 className="card-title">Query performance</h2>
-          <div className="grid-auto" style={vars({ min: 420, gap: 24 })}>
-            {top.length ? (
-              <Chart
-                type="bar"
-                title="Latency per query"
-                subtitle={`Median of ${trial.request.runsPerQuery} runs${top.length < measured.length ? `, ${top.length} most frequent queries` : ''}`}
-                categoryLabel="Query"
-                categories={top.map((q) => q.label)}
-                series={[
-                  { name: 'Baseline', values: top.map((q) => q.baseMs ?? 0) },
-                  { name: 'Candidate', values: top.map((q) => q.candMs ?? 0) },
-                ]}
-                format={fmtMs}
-                height={220}
-              />
-            ) : null}
-            {scanCols.length ? (
-              <Chart
-                type="bar"
-                title="Scan time, changed columns"
-                subtitle="Median full read"
-                categoryLabel="Column"
-                categories={scanCols.map((c) => c.name)}
-                series={[
-                  { name: 'Baseline', values: scanCols.map((c) => c.baseScanMs ?? 0) },
-                  { name: 'Candidate', values: scanCols.map((c) => c.candScanMs ?? 0) },
-                ]}
-                format={fmtMs}
-                height={220}
-              />
-            ) : null}
-          </div>
-          {r.queries.length ? <NewIndexes trial={trial} result={r} /> : null}
-          {r.queries.length ? (
-            <ol className="stack" style={{ listStyle: 'none', margin: 0, padding: 0, ...vars({ gap: 12 }) }}>
-              {r.queries.map((q) => {
-                const speed = q.baseMs != null && q.candMs != null ? fmtSpeed(q.baseMs, q.candMs) : null;
-                // The medians only tell the tables apart when no run of one took as long as a run of the other.
-                const b = q.baseRuns ?? [];
-                const c = q.candRuns ?? [];
-                const overlap = b.length > 0 && c.length > 0 && Math.max(Math.min(...b), Math.min(...c)) <= Math.min(Math.max(...b), Math.max(...c));
-                const unclear = !!speed && !speed.same && overlap;
-                const bad = !!speed && !unclear && speed.slower && q.candMs! > q.baseMs! * 1.05;
-                return (
-                  <li key={q.label} className={`card card-row${bad ? ' is-worse' : ''}`}>
-                    <div className="row" style={{ alignItems: 'baseline', flexWrap: 'nowrap', ...vars({ gap: 12 }) }}>
-                      <span className="g-count g-num" style={{ flex: 'none' }}>
-                        {q.label}
-                      </span>
-                      <span className="g-sql g-sql--full">{q.query}</span>
-                    </div>
-                    <div className="facts-row">
-                      <dl className="facts">
-                        <div>
-                          <dt className="eyebrow">Share of workload</dt>
-                          <dd>{fmtPct(q.share, 0)}</dd>
-                        </div>
-                        <div>
-                          <dt className="eyebrow">Baseline</dt>
-                          <dd>{fmtMs(q.baseMs)}</dd>
-                          <RunRange runs={b} />
-                        </div>
-                        <div>
-                          <dt className="eyebrow">Candidate</dt>
-                          <dd className="strong">{fmtMs(q.candMs)}</dd>
-                          <RunRange runs={c} />
-                        </div>
-                        {q.baseCpuMs != null && q.candCpuMs != null ? (
-                          <div>
-                            <dt className="eyebrow">CPU time</dt>
-                            <dd>
-                              {fmtMs(q.baseCpuMs)} → {fmtMs(q.candCpuMs)}
-                            </dd>
-                          </div>
-                        ) : null}
-                        <div>
-                          <dt className="eyebrow">Rows read</dt>
-                          <dd>{q.baseReadRows != null && q.candReadRows != null ? `${fmtRows(q.baseReadRows)} → ${fmtRows(q.candReadRows)}` : '—'}</dd>
-                        </div>
-                        {q.baseExplain?.granulesRead != null && q.candExplain?.granulesRead != null ? (
-                          <div>
-                            <dt className="eyebrow">Granules read</dt>
-                            <dd>
-                              {fmtInt(q.baseExplain.granulesRead)} → {fmtInt(q.candExplain.granulesRead)}
-                              {q.candExplain.granulesTotal ? <span className="muted"> of {fmtInt(q.candExplain.granulesTotal)}</span> : null}
-                            </dd>
-                          </div>
-                        ) : null}
-                      </dl>
-                      {q.error ? (
-                        <span className="status body-sm g-wrap">
-                          <StatusDot tone="muted" />
-                          Not run: {q.error}
-                        </span>
-                      ) : speed ? (
-                        <span className="status body-sm" style={{ fontWeight: 700 }}>
-                          <StatusDot tone={bad ? 'error' : speed.same || unclear ? 'muted' : 'success'} />
-                          {unclear ? 'no clear difference' : speed.text}
-                        </span>
-                      ) : null}
-                    </div>
-                    {q.baseExplain || q.candExplain || q.baseAnalyze || q.candAnalyze ? (
-                      <QueryPlans base={q.baseExplain} cand={q.candExplain} baseRun={q.baseAnalyze} candRun={q.candAnalyze} />
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ol>
-          ) : null}
-        </section>
-      ) : null}
-
+/** The statements: what would bring production to the candidate, and how the two trial tables were created. */
+function Schema({ trial, result: r }: { trial: Trial; result: TrialResult }) {
+  return (
+    <>
       {r.alterDdl ? (
         <section className="stack" style={vars({ gap: 12 })}>
-          <h2 className="subhead" style={{ overflowWrap: 'anywhere' }}>
+          <h2 className="card-title" style={{ overflowWrap: 'anywhere' }}>
             Production · {trial.database}.{trial.table}
           </h2>
           <p className="body-sm muted">
-            The statements that bring the production table to the candidate's schema. Granulee does not run them.
+            The statements that bring the production table to the candidate's schema. “Apply to production” shows them again, computed against the table as
+            it is then.
           </p>
           <CodeBlock code={r.alterDdl} copyLabel="Copy SQL" />
         </section>
-      ) : null}
-
+      ) : (
+        <p className="body-sm muted">The candidate has the same schema as the production table, so there is nothing to apply.</p>
+      )}
       <section className="grid-auto" style={vars({ min: 420, gap: 24 })}>
         <div className="stack" style={vars({ gap: 12 })}>
           <h2 className="subhead" style={{ overflowWrap: 'anywhere' }}>
