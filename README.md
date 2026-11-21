@@ -67,13 +67,44 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
 | --- | --- |
 | `backend/` | Kotlin, Spring Boot 4, ClickHouse Java client v2 (HTTP). Serves `/api/**`. |
 | `frontend/` | React 19, Vite, TypeScript. Estilo (Compra Contínua) look, light only. |
-| `frontend/src/api/types.ts` | The API contract. `backend/.../Api.kt` mirrors it. |
+| `frontend/src/api/types.ts` | The API contract. The backend's data classes mirror it field for field, each in the package of its feature. |
 | `dev/seed.sh` | Fills a local ClickHouse with sample data that has findings. |
 
 Granulee keeps its own state as JSON files in `backend/data/` (override with `GRANULEE_DATA_DIR`):
 sources, the last scan per source, size history, dismissed recommendations and trials. ClickHouse
 passwords are stored AES-GCM encrypted; the key is `GRANULEE_SECRET_KEY` (base64, 32 bytes) or, if
 unset, a key file created in the data directory.
+
+### Backend packages
+
+The backend is one package per feature under `backend/src/main/kotlin/io/granulee/`. A package only uses
+the ones above it in this table, so there are no cycles.
+
+| Package | What |
+| --- | --- |
+| `sql` | ClickHouse SQL as text, without a server: quoting, column types, key expressions, `engine_full`, rewriting logged queries, skip index definitions. |
+| `clickhouse` | The connection: `ChConnection` (query, exec) and its HTTP implementation, one client per endpoint. |
+| `state` | `JsonStore`, the JSON files in the data directory. |
+| `facts` | What a scan knows about a table (`TableFacts` and its parts). These classes are the format of `snapshots/*.json`. |
+| `explain` | `EXPLAIN indexes = 1`, `EXPLAIN ANALYZE` and `EXPLAIN QUERY TREE`: asking the server and reading what it prints. |
+| `recommendation` | The rules (`Analyzer`) that turn table facts into recommendations, and the ones a person dismissed. |
+| `scan` | Reads a server's system tables and query log into a snapshot (`Scanner`); keeps the snapshots and the size history. |
+| `source` | The registered servers: credentials, health, when they are scanned, `/api/sources`. |
+| `trial` | Trials from plan to result: the run (`TrialRun`, `QueryReplay`, `CodecBakeoff`), the DDL and migration SQL, the report, applying a candidate, `/api/trials`. |
+| `usage` | How a table was queried, from `system.query_log`. |
+| `index` | What skip indexes, projections and keys do for the logged queries, and `EXPLAIN WHATIF` estimates. |
+| `explorer` | Overview, databases, the table page and its recommendations. |
+| `web` | Error answers, `/api/health`, serving the frontend. |
+
+`io.granulee` itself only holds the application class, the two errors a request can end in and the number
+formatting of the texts.
+
+Within a package the controller only maps HTTP to a service. What decides something (the rules, the
+migration and DDL text, a trial's result and verdict, the index and usage summaries, the parsers) is in
+plain functions and classes that need no Spring, no server and no files, and is tested that way. Everything
+that talks to ClickHouse takes a `ChConnection`; the tests hand it a stand-in (`FakeClickHouse`) and check
+the statements it is sent. `StoredFilesTest` loads data files as a release wrote them and checks they are
+written back byte for byte: the file format is part of the contract, like the API.
 
 ## Run
 
