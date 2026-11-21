@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/pixelweb-org/granulee/compare/v0.16.0...v0.17.0) (2026-11-21)
+
+
+### Features
+
+* compare codecs in a trial and name the best one per column ([4e8628d](https://github.com/pixelweb-org/granulee/commit/4e8628dcc0131d29971217d9191b65b1d2070dde))
+
 ## [0.16.0](https://github.com/pixelweb-org/granulee/compare/v0.15.0...v0.16.0) (2026-11-21)
 
 
