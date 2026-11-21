@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { IndexStep, QueryExplain, Trial, TrialMetric, TrialResult } from '../api/types';
+import type { QueryExplain, Trial, TrialMetric, TrialResult } from '../api/types';
 import { useApi, usePolling } from '../hooks/useApi';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
@@ -9,6 +9,7 @@ import { BytesChart } from '../components/BytesChart';
 import { Chart } from '../components/Chart';
 import { CodeBlock } from '../components/CodeBlock';
 import { PageHeader } from '../components/PageHeader';
+import { PlanSteps } from '../components/PlanSteps';
 import { ErrorState, Loading } from '../components/States';
 import { Status, StatusDot, type Tone } from '../components/StatusDot';
 import { ApplyTrialDialog, OptimizeTrialDialog, RemoveTrialDialog, TrialProgressCard, trialTone, useRemoveTrial } from '../components/TrialParts';
@@ -30,8 +31,6 @@ import {
   fmtTime,
 } from '../lib/format';
 import { vars } from '../lib/style';
-
-const STEP_KIND: Record<IndexStep['kind'], string> = { minmax: 'Min-max', partition: 'Partition', primary: 'Primary key', skip: 'Skip index' };
 
 /** Did the skip indexes this trial added prune anything? Summed over the replayed queries' plans on the candidate. */
 function NewIndexes({ trial, result }: { trial: Trial; result: TrialResult }) {
@@ -127,33 +126,7 @@ function PlanSide({ title, plan }: { title: string; plan: QueryExplain | null })
       {plan.error ? (
         <p className="body-sm muted g-wrap">EXPLAIN failed: {plan.error}</p>
       ) : plan.steps.length ? (
-        <table className="g-tbl">
-          <thead>
-            <tr>
-              <th>Index</th>
-              <th className="r">Parts</th>
-              <th className="r">Granules</th>
-            </tr>
-          </thead>
-          <tbody>
-            {plan.steps.map((s, i) => (
-              <tr key={i}>
-                <td>
-                  <span className="ink" style={{ fontWeight: 700 }}>
-                    {STEP_KIND[s.kind]}
-                  </span>
-                  <div className="g-mono g-wrap">{s.name}</div>
-                </td>
-                <td className="r nowrap">
-                  {fmtInt(s.partsBefore)} → {fmtInt(s.partsAfter)}
-                </td>
-                <td className={`r nowrap${s.granulesAfter < s.granulesBefore ? ' g-strong' : ''}`}>
-                  {fmtInt(s.granulesBefore)} → {fmtInt(s.granulesAfter)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <PlanSteps steps={plan.steps} />
       ) : (
         <p className="body-sm muted">No index narrows this query: it reads every granule.</p>
       )}

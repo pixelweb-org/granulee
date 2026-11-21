@@ -226,6 +226,7 @@ class ExplorerController(
             findings = findings.size,
             files = fileFacts(ch, where)[db to table],
             buffers = bufferTables(ch)["$db.$table"].orEmpty(),
+            projections = projections(ch, db, table, source.queryLogWindowDays),
         )
     }
 

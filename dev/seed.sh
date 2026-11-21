@@ -1,6 +1,6 @@
 #!/bin/sh
 # Fills a local ClickHouse with a small "analytics" schema that has things for Granulee to find:
-# daily partitions, default codecs on big text columns, Nullable columns, a skip index, and a
+# daily partitions, default codecs on big text columns, Nullable columns, a skip index, a projection, and a
 # query_log where most queries filter on event_type while the sorting key leads with user_id.
 #
 #   docker run -d --name granulee-test-ch -p 127.0.0.1:18123:8123 \
@@ -61,7 +61,8 @@ ch "CREATE TABLE analytics.page_views
     user_id UInt64,
     path LowCardinality(String),
     title String,
-    load_ms UInt32
+    load_ms UInt32,
+    PROJECTION load_per_user (SELECT user_id, count(), sum(load_ms) GROUP BY user_id)
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(view_time)
@@ -87,5 +88,6 @@ while [ $i -lt 30 ]; do
   [ $((i % 5)) -eq 0 ] && ch "SELECT country, uniq(user_id) FROM analytics.events WHERE event_date >= today() - 30 GROUP BY country FORMAT Null"
   i=$((i + 1))
 done
+ch "SELECT user_id, count(), sum(load_ms) FROM analytics.page_views GROUP BY user_id ORDER BY user_id LIMIT 20 FORMAT Null"
 ch "SYSTEM FLUSH LOGS"
 ch "SELECT 'events rows', count() FROM analytics.events FORMAT TSV"

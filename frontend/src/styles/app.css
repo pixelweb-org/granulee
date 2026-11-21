@@ -121,7 +121,7 @@ dl.facts dd.strong { font-weight: 700; }
 .g-tbl td.g-strong, .g-tbl td strong { color: var(--cinza-escuro); font-weight: 700; }
 .g-tbl .r { text-align: right; }
 .g-tbl .nowrap { white-space: nowrap; }
-.g-tbl tbody tr:hover td { background: var(--bg-start); }
+.g-tbl > tbody > tr:hover > td { background: var(--bg-start); }
 .g-tbl tr.is-changed td { background: var(--superficie-2); }
 .share { display: flex; align-items: center; gap: 10px; min-width: 140px; }
 .g-track { flex: 1; min-width: 60px; height: 6px; border-radius: 3px; background: var(--cinza-claro); }
@@ -134,6 +134,16 @@ dl.facts dd.strong { font-weight: 700; }
 .g-sql { font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: var(--cinza-escuro); }
 .g-sql--full { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
 .g-sql--clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+/* A table whose rows open a panel underneath, one at a time. */
+.g-acc > tbody > tr.g-acc__row { cursor: pointer; }
+.g-acc > tbody > tr.is-open > td { border-bottom-color: transparent; background: var(--bg-start); }
+.g-acc__btn { display: inline-flex; align-items: center; gap: 8px; min-height: 24px; padding: 0; border: 0; background: none; font: inherit; font-weight: 700; color: var(--cinza-escuro); text-align: left; cursor: pointer; white-space: nowrap; }
+.g-acc__chev { flex: none; color: var(--cinza-texto); transition: transform 200ms ease-out; }
+.g-acc__btn[aria-expanded="true"] .g-acc__chev { transform: rotate(90deg); }
+.g-acc > tbody > tr.g-acc__panel > td { padding: 4px 12px 20px 34px; background: var(--bg-start); }
+.g-plan { background: var(--branco); border: 1px solid var(--cinza-claro); border-radius: var(--radius-sm); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.g-plan .g-tbl td, .g-plan .g-tbl th { padding: 6px 10px; }
+@media (max-width: 640px) { .g-acc > tbody > tr.g-acc__panel > td { padding-left: 12px; } }
 .g-rowbtn { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .g-act { color: var(--azul-texto); text-decoration: underline; text-underline-offset: 3px; }
 
@@ -169,7 +179,7 @@ fieldset.group legend { padding: 0 6px; font-size: 0.875rem; font-weight: 700; c
 .cc-btn--danger:hover:not([disabled]) { box-shadow: var(--shadow-lift); }
 .cc-btn--sm { min-height: 36px; padding: 8px 14px; font-size: 0.8125rem; }
 .cc-btn--tight { padding: 8px 12px; }
-@media (prefers-reduced-motion: reduce) { .cc-btn, .g-nav a, .g-tabs a, .cc-field__input, .g-select, .card-link { transition: none; } .card-link:hover { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .g-acc__chev, .g-nav a, .g-tabs a, .cc-field__input, .g-select, .card-link { transition: none; } .card-link:hover { transform: none; } }
 
 /* Dialog */
 .dialog-overlay { position: fixed; inset: 0; z-index: var(--z-modal); background: var(--overlay); display: flex; align-items: flex-start; justify-content: center; padding: min(160px, 15vh) 24px 24px; overflow-y: auto; }

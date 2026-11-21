@@ -139,6 +139,21 @@ data class SkipIndex(
     val uncompressedBytes: Long,
 )
 
+/** One projection of a table. Sizes are sums over the active parts that carry it. */
+data class Projection(
+    val name: String,
+    val type: String, // Normal | Aggregate; "" where the server has no system.projections
+    val sortingKey: String,
+    val query: String,
+    val parts: Long, // active parts in which it is built
+    val rows: Long,
+    val bytesOnDisk: Long,
+    val compressedBytes: Long,
+    val uncompressedBytes: Long,
+    val selects: Long?, // logged SELECTs that read it; null = query_log not readable
+    val lastUsed: String?,
+)
+
 data class Setting(val name: String, val value: String)
 data class PartitionStat(val partition: String, val compressedBytes: Long, val parts: Long)
 
@@ -174,6 +189,7 @@ data class TableDetail(
     val findings: Int,
     val files: FileFacts? = null,
     val buffers: List<String> = emptyList(), // Buffer tables in front, as database.table
+    val projections: List<Projection> = emptyList(),
 )
 
 data class QueryEvidence(val query: String, val count: Long, val share: Double)

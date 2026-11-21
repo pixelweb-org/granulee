@@ -5,6 +5,17 @@ import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 
+/** One logged query shape and how ClickHouse plans it on the production table now. */
+data class PlannedQuery(
+    val query: String,
+    val count: Long, // runs in the log window
+    val share: Double, // of the table's SELECTs
+    val plan: QueryExplain,
+)
+
+/** The query shapes that touch one projection: planned onto it now, or logged as answered from it. */
+data class ProjectionUsage(val name: String, val queries: List<Int>)
+
 /** What one skip index did for the logged queries, measured with EXPLAIN on the production table. */
 data class IndexUsage(
     val name: String,
@@ -15,6 +26,7 @@ data class IndexUsage(
     val share: Double, // of the table's SELECTs, by run count
     val granulesBefore: Long, // handed to the index, over those shapes
     val granulesAfter: Long, // left after it
+    val queries: List<Int> = emptyList(), // the shapes that use it, as positions in TableIndexUsage.queries
 )
 
 data class TableIndexUsage(
@@ -23,6 +35,8 @@ data class TableIndexUsage(
     val selects: Long, // SELECTs in the log window the shapes stand for
     val message: String?,
     val indexes: List<IndexUsage>,
+    val projections: List<ProjectionUsage> = emptyList(),
+    val queries: List<PlannedQuery> = emptyList(), // every planned shape, most frequent first
 )
 
 @RestController
@@ -30,8 +44,9 @@ data class TableIndexUsage(
 class IndexController(private val sources: SourceService, private val scans: ScanService) {
 
     /**
-     * Runs EXPLAIN indexes = 1 for the table's most frequent logged SELECTs and adds up, per skip index,
-     * how many granules it was given and how many it left. Nothing is executed; planning reads index files only.
+     * Runs EXPLAIN indexes = 1 for the table's most frequent logged SELECTs, and for the ones logged as answered
+     * from a projection. Per skip index it adds up how many granules it was given and how many it left, and it
+     * tells which shapes use each index and each projection. Nothing is executed; planning reads index files only.
      */
     @GetMapping("/sources/{id}/databases/{db}/tables/{table}/index-usage")
     fun usage(@PathVariable id: String, @PathVariable db: String, @PathVariable table: String): TableIndexUsage {
@@ -39,28 +54,71 @@ class IndexController(private val sources: SourceService, private val scans: Sca
         val facts = scans.snapshot(id)?.table(db, table)
             ?: throw NotFoundException("Table $db.$table was not in the last scan of ${source.name}. Scan the source first.")
         fun none(message: String) = TableIndexUsage(0, 0, 0, message, facts.indexes.map { IndexUsage(it.name, it.expression, it.type, it.compressedBytes, 0, 0.0, 0, 0) })
-        if (facts.queryTotal == null) return none("system.query_log cannot be read on ${source.name}, so there are no queries to check the indexes against.")
+        if (facts.queryTotal == null) return none("system.query_log cannot be read on ${source.name}, so there are no queries to check the indexes and projections against.")
         if (facts.queries.isEmpty()) return none("No SELECT on this table in the last ${source.queryLogWindowDays} days of query_log.")
 
         val ch = sources.connection(source)
         val target = Sql.table(db, table)
         val total = facts.queryTotal.coerceAtLeast(1)
+        val names = projections(ch, db, table, source.queryLogWindowDays).map { it.name }.toSet()
+
+        // The shapes to plan, by normalized text: the table's most frequent ones, then those that read a projection.
+        val shapes = LinkedHashMap<String, QueryFacts>()
+        facts.queries.forEach { shapes.putIfAbsent(it.normalized, it) }
+        val logged = if (names.isEmpty()) emptyMap() else projectionReads(ch, "$db.$table.", source.queryLogWindowDays)
+        logged.values.flatten().forEach { shapes.putIfAbsent(it.normalized, it) }
+
         val settings = Explain.planned(ch) + mapOf("max_execution_time" to "30")
-        val plans = facts.queries.map { q ->
+        val planned = shapes.values.sortedByDescending { it.count }.map { q ->
             // A query on a Buffer table in front is planned against the table behind it.
             val sql = facts.buffers.fold(q.query) { text, buffer -> rewriteQuery(text, buffer.substringBefore('.'), buffer.substringAfter('.'), target) }
-            q to Explain.of(ch, sql, "$db.$table", pipeline = false, settings = settings)
+            q to Explain.of(ch, sql, "$db.$table", pipeline = false, settings = settings, projections = names)
         }
         val indexes = facts.indexes.map { index ->
-            val used = plans.mapNotNull { (q, plan) -> plan.steps.firstOrNull { it.kind == "skip" && it.name == index.name }?.let { q to it } }
+            val used = planned.withIndex().mapNotNull { (at, pair) ->
+                pair.second.steps.firstOrNull { it.kind == "skip" && it.name == index.name }?.let { Triple(at, pair.first, it) }
+            }
             IndexUsage(
                 index.name, index.expression, index.type, index.compressedBytes,
                 shapes = used.size,
-                share = used.sumOf { it.first.count }.toDouble() / total,
-                granulesBefore = used.sumOf { it.second.granulesBefore },
-                granulesAfter = used.sumOf { it.second.granulesAfter },
+                share = used.sumOf { it.second.count }.toDouble() / total,
+                granulesBefore = used.sumOf { it.third.granulesBefore },
+                granulesAfter = used.sumOf { it.third.granulesAfter },
+                queries = used.map { it.first },
             )
         }
-        return TableIndexUsage(plans.size, plans.count { it.second.error != null }, facts.queries.sumOf { it.count }, null, indexes)
+        val projectionUse = names.sorted().map { name ->
+            val read = logged[name].orEmpty().map { it.normalized }.toSet()
+            ProjectionUsage(name, planned.withIndex().filter { (_, pair) -> pair.second.projection == name || pair.first.normalized in read }.map { it.index })
+        }
+        return TableIndexUsage(
+            checkedShapes = planned.size,
+            failedShapes = planned.count { it.second.error != null },
+            selects = planned.sumOf { it.first.count },
+            message = null,
+            indexes = indexes,
+            projections = projectionUse,
+            queries = planned.map { (q, plan) -> PlannedQuery(q.query, q.count, q.count.toDouble() / total, plan) },
+        )
+    }
+
+    /** Per projection name, the five most frequent SELECT shapes the log says were answered from it. */
+    private fun projectionReads(ch: ChConnection, prefix: String, days: Int): Map<String, List<QueryFacts>> = try {
+        ch.query(
+            """
+            SELECT p, substring(q, 1, 20000) AS q, substring(normalizeQuery(q), 1, 4000) AS nq, toInt64(c) AS c
+            FROM (
+                SELECT p, any(query) AS q, count() AS c
+                FROM system.query_log ARRAY JOIN projections AS p
+                WHERE event_date >= today() - $days AND type = 'QueryFinish' AND query_kind = 'Select' AND is_initial_query
+                  AND $NOT_GRANULEE AND startsWith(p, ${Sql.lit(prefix)})
+                GROUP BY p, normalized_query_hash
+            )
+            ORDER BY c DESC
+            LIMIT 5 BY p
+            """.trimIndent(),
+        ).groupBy({ it.str("p").removePrefix(prefix) }) { QueryFacts(it.str("q"), it.str("nq"), it.long("c")) }
+    } catch (e: Exception) {
+        emptyMap()
     }
 }

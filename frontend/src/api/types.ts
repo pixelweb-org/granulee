@@ -152,6 +152,21 @@ export interface SkipIndex {
   uncompressedBytes: number;
 }
 
+/** One projection of a table. Sizes are sums over the active parts that carry it. */
+export interface Projection {
+  name: string;
+  type: string; // Normal | Aggregate; "" where the server has no system.projections
+  sortingKey: string;
+  query: string;
+  parts: number; // active parts in which it is built
+  rows: number;
+  bytesOnDisk: number;
+  compressedBytes: number;
+  uncompressedBytes: number;
+  selects: number | null; // logged SELECTs that read it; null = query log not readable
+  lastUsed: string | null;
+}
+
 export interface TableDetail {
   sourceId: string;
   sourceName: string;
@@ -173,6 +188,7 @@ export interface TableDetail {
   partitions: number;
   files: FileFacts | null;
   buffers: string[]; // Buffer tables in front, as database.table
+  projections: Projection[];
   primaryKeyBytesInMemory: number;
   primaryKeyBytesInMemoryAllocated: number;
   marks: number;
@@ -351,6 +367,15 @@ export interface QueryExplain {
   streams: number | null; // parallel read streams
   pipeline: string | null; // EXPLAIN PIPELINE text
   error: string | null;
+  projection: string | null; // the projection the read is answered from; then the steps are its own indexes
+}
+
+/** One logged query shape and how ClickHouse plans it on the production table now. */
+export interface PlannedQuery {
+  query: string;
+  count: number; // runs in the log window
+  share: number; // 0..1 of the table's SELECTs
+  plan: QueryExplain;
 }
 
 /** What the skip indexes did for the logged queries, measured with EXPLAIN on the production table. */
@@ -368,7 +393,11 @@ export interface TableIndexUsage {
     share: number; // 0..1 of the table's SELECTs
     granulesBefore: number;
     granulesAfter: number;
+    queries: number[]; // the shapes that use it, as positions in `queries`
   }[];
+  /** Per projection, the shapes planned onto it now or logged as answered from it. */
+  projections: { name: string; queries: number[] }[];
+  queries: PlannedQuery[]; // every planned shape, most frequent first
 }
 
 export interface TrialResult {

@@ -22,6 +22,7 @@ data class QueryExplain(
     val streams: Int? = null, // parallel read streams, from EXPLAIN PIPELINE
     val pipeline: String? = null,
     val error: String? = null,
+    val projection: String? = null, // the projection the read is answered from; then the steps are its own indexes
 )
 
 /** Asks ClickHouse how it would run a query, without running it. */
@@ -55,11 +56,16 @@ object Explain {
     /**
      * EXPLAIN indexes = 1 for the index steps and EXPLAIN PIPELINE for the read streams.
      * `table` ("database.table") limits the steps to reads of that table; null takes every read.
+     * A read that is answered from a projection carries the projection's name instead of the table's,
+     * so `projections` names the ones of `table` that count as reads of it.
      */
-    fun of(ch: ChConnection, query: String, table: String? = null, pipeline: Boolean = true, settings: Map<String, String> = emptyMap()): QueryExplain = try {
+    fun of(
+        ch: ChConnection, query: String, table: String? = null, pipeline: Boolean = true, settings: Map<String, String> = emptyMap(),
+        projections: Set<String> = emptySet(),
+    ): QueryExplain = try {
         val sql = clean(query)
         val plan = ch.query("EXPLAIN json = 1, indexes = 1 $sql", settings).joinToString("\n") { it.str("explain") }
-        val reads = readNodes(mapper.readValue(plan, Any::class.java)).filter { table == null || it["Description"] == table }
+        val reads = readNodes(mapper.readValue(plan, Any::class.java)).filter { table == null || it["Description"] == table || it["Description"] in projections }
         val steps = reads.flatMap { node ->
             (node["Indexes"] as? List<*>).orEmpty().filterIsInstance<Map<*, *>>().map { index ->
                 val kind = when (index["Type"]?.toString()?.replace("-", "")?.lowercase()) {
@@ -97,6 +103,7 @@ object Explain {
             partsRead = perRead.takeIf { it.isNotEmpty() }?.sumOf { number(it.last()["Selected Parts"]) },
             streams = streams,
             pipeline = text?.take(4000),
+            projection = reads.firstNotNullOfOrNull { node -> node["Description"]?.toString()?.takeIf { it in projections } },
         )
     } catch (e: Exception) {
         QueryExplain(error = e.message ?: e.javaClass.simpleName)

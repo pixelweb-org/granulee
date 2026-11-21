@@ -4,6 +4,7 @@ import { EmptyState } from './components/States';
 import { Button } from './components/Button';
 import { OverviewPage } from './pages/OverviewPage';
 import { ExplorerPage } from './pages/ExplorerPage';
+import { IndexesPage } from './pages/IndexesPage';
 import { UsagePage } from './pages/UsagePage';
 import { TablePage } from './pages/TablePage';
 import { RecommendationsListPage } from './pages/RecommendationsListPage';
@@ -22,6 +23,7 @@ export function App() {
         <Route path="explorer/:sourceId" element={<ExplorerPage />} />
         <Route path="explorer/:sourceId/:database" element={<ExplorerPage />} />
         <Route path="tables/:sourceId/:database/:table" element={<TablePage />} />
+        <Route path="tables/:sourceId/:database/:table/indexes" element={<IndexesPage />} />
         <Route path="tables/:sourceId/:database/:table/usage" element={<UsagePage />} />
         <Route path="recommendations" element={<RecommendationsListPage />} />
         <Route path="recommendations/:sourceId/:database/:table" element={<RecommendationsPage />} />

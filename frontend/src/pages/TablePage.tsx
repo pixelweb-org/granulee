@@ -1,9 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import type { TableIndexUsage } from '../api/types';
 import { useApi } from '../hooks/useApi';
-import { Button } from '../components/Button';
 import { useSources } from '../state/sources';
 import { Card, StatTile } from '../components/Card';
 import { BytesChart } from '../components/BytesChart';
@@ -30,25 +28,6 @@ export function TablePage() {
     if (sourceId && sourceId !== selectedId && sources.some((s) => s.id === sourceId)) select(sourceId);
   }, [sourceId, selectedId, sources, select]);
 
-  const [usage, setUsage] = useState<TableIndexUsage | null>(null);
-  const [usageError, setUsageError] = useState<string | null>(null);
-  const [checking, setChecking] = useState(false);
-  useEffect(() => {
-    setUsage(null);
-    setUsageError(null);
-  }, [sourceId, database, table]);
-  async function checkIndexes() {
-    setChecking(true);
-    setUsageError(null);
-    try {
-      setUsage(await api.indexUsage(sourceId, database, table));
-    } catch (e) {
-      setUsageError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setChecking(false);
-    }
-  }
-
   if (error && !t) {
     return (
       <>
@@ -65,13 +44,15 @@ export function TablePage() {
   const shareNames = [...top5.map((c) => c.name), ...(other > 0 ? ['Other'] : [])];
   const shareVals = [...top5.map((c) => c.compressedBytes), ...(other > 0 ? [other] : [])];
   const parts = t.partitionStats;
+  const projections = t.projections;
+  const projectionBytes = projections.reduce((a, p) => a + p.bytesOnDisk, 0);
 
   return (
     <>
       <TableHeader
         t={t}
         active="structure"
-        description={t.comment.trim() ? t.comment : 'Read from system.tables, system.parts, system.columns and system.data_skipping_indices.'}
+        description={t.comment.trim() ? t.comment : 'Read from system.tables, system.parts, system.columns, system.data_skipping_indices and system.projections.'}
       />
 
       <section aria-label="Table size" className="grid-auto" style={vars({ min: 170 })}>
@@ -79,7 +60,7 @@ export function TablePage() {
         <StatTile label="Compressed data" value={fmtBytes(t.compressedBytes)} />
         <StatTile label="Uncompressed data" value={fmtBytes(t.uncompressedBytes)} />
         <StatTile label="Ratio" value={fmtRatio(t.uncompressedBytes, t.compressedBytes)} />
-        <StatTile label="Size on disk" value={fmtBytes(t.bytesOnDisk)} sub="incl. marks, PK, skip indexes" />
+        <StatTile label="Size on disk" value={fmtBytes(t.bytesOnDisk)} sub="incl. marks, PK, skip indexes, projections" />
         <StatTile label="Active parts · partitions" value={`${fmtInt(t.activeParts)} · ${fmtInt(t.partitions)}`} />
         {t.files ? <StatTile label="Files on disk" value={`≈ ${fmtInt(t.files.files)}`} sub={`largest part ≈ ${fmtInt(t.files.largestPartFiles)}`} /> : null}
       </section>
@@ -119,7 +100,22 @@ export function TablePage() {
               {fmtRows(t.marks)} <span className="muted">· {fmtBytes(t.marksBytes)} on disk</span>
             </Term>
             <Term label="Skip indexes">
-              {t.indexes.length ? `${fmtInt(t.indexes.length)} · ${fmtBytes(t.skipIndexBytes)} compressed` : 'None'}
+              {t.indexes.length ? (
+                <Link className="g-link" to={routes.indexes(sourceId, database, table)}>
+                  {fmtInt(t.indexes.length)} · {fmtBytes(t.skipIndexBytes)} compressed
+                </Link>
+              ) : (
+                'None'
+              )}
+            </Term>
+            <Term label="Projections">
+              {projections.length ? (
+                <Link className="g-link" to={routes.indexes(sourceId, database, table)}>
+                  {fmtInt(projections.length)} · {fmtBytes(projectionBytes)} on disk
+                </Link>
+              ) : (
+                'None'
+              )}
             </Term>
             {t.settings.map((s) => (
               <Term key={s.name} label={s.name} mono>
@@ -231,84 +227,6 @@ export function TablePage() {
         </section>
       ) : null}
 
-      <section className="stack">
-        <div className="between" style={{ alignItems: 'center' }}>
-          <h2 className="card-title">Data skipping indexes</h2>
-          {t.indexes.length ? (
-            <Button variant="secondary" small busy={checking} onClick={() => void checkIndexes()}>
-              {checking ? 'Checking…' : usage ? 'Check again' : 'Check against the query log'}
-            </Button>
-          ) : null}
-        </div>
-        {usageError ? <p className="g-notice g-wrap">{usageError}</p> : null}
-        {usage?.message ? <p className="g-notice">{usage.message}</p> : null}
-        {t.indexes.length ? (
-          <Card table>
-            <table className="g-tbl">
-              <thead>
-                <tr>
-                  <th>Index</th>
-                  <th>Expression</th>
-                  <th>Type</th>
-                  <th className="r">Granularity</th>
-                  <th className="r">Compressed</th>
-                  <th className="r">Uncompressed</th>
-                  {usage && !usage.message ? (
-                    <>
-                      <th className="r">Used by</th>
-                      <th style={{ width: '18%' }}>Granules dropped</th>
-                    </>
-                  ) : null}
-                </tr>
-              </thead>
-              <tbody>
-                {t.indexes.map((i) => {
-                  const u = usage?.indexes.find((x) => x.name === i.name);
-                  const dropped = u && u.granulesBefore > 0 ? 1 - u.granulesAfter / u.granulesBefore : 0;
-                  return (
-                    <tr key={i.name}>
-                      <td className="g-strong">{i.name}</td>
-                      <td className="g-mono">{i.expression}</td>
-                      <td className="g-mono">{i.type}</td>
-                      <td className="r">{fmtInt(i.granularity)}</td>
-                      <td className="r g-strong nowrap">{fmtBytes(i.compressedBytes)}</td>
-                      <td className="r nowrap">{fmtBytes(i.uncompressedBytes)}</td>
-                      {usage && !usage.message ? (
-                        <>
-                          <td className="r nowrap">{u && u.shapes > 0 ? `${fmtPct(u.share, 0)} of SELECTs` : 'no logged query'}</td>
-                          <td>
-                            {u && u.shapes > 0 ? (
-                              <div className="share">
-                                <div className="g-track">
-                                  <div className="g-fill" style={{ width: `${Math.min(100, dropped * 100)}%` }} />
-                                </div>
-                                <span className="g-num ink" style={{ width: 36, textAlign: 'right' }}>
-                                  {fmtPct(dropped, 0)}
-                                </span>
-                              </div>
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-                        </>
-                      ) : null}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </Card>
-        ) : (
-          <p className="body-sm muted">This table has no data skipping indexes.</p>
-        )}
-        {usage && !usage.message ? (
-          <p className="caption muted">
-            Planned {fmtInt(usage.checkedShapes)} logged query {usage.checkedShapes === 1 ? 'shape' : 'shapes'} with EXPLAIN indexes = 1, standing for{' '}
-            {fmtInt(usage.selects)} SELECTs{usage.failedShapes ? `; ${fmtInt(usage.failedShapes)} could not be planned` : ''}. “Granules dropped” is what an index
-            removed from the granules the earlier indexes left over. An index no logged query uses, or one that drops nothing, only costs inserts and disk.
-          </p>
-        ) : null}
-      </section>
     </>
   );
 }

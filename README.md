@@ -3,7 +3,8 @@
 Finds storage and schema improvements on ClickHouse servers and measures them before you apply them.
 
 - **Scans** read system tables only (`system.tables`, `system.parts`, `system.columns`,
-  `system.parts_columns`, `system.data_skipping_indices`, `system.query_log`). Table data is not read.
+  `system.parts_columns`, `system.data_skipping_indices`, `system.projections`, `system.projection_parts`,
+  `system.query_log`). Table data is not read.
 - **Recommendations** cover partitioning, sorting keys (from what `query_log` shows queries filter on),
   codecs, data types and skip indexes. Savings are estimates.
 - **Without a query log** the scan still covers sizes, codecs, types, partitioning and file counts.
@@ -11,9 +12,13 @@ Finds storage and schema improvements on ClickHouse servers and measures them be
   the steps to switch it on.
 - **Usage** shows how a table was queried, from `system.query_log`: SELECT and INSERT volume, which
   columns are read and filtered on, the most frequent query shapes and who runs them.
-- **Skip indexes** are measured, not guessed: the table page plans the logged queries with
-  `EXPLAIN indexes = 1` and shows what each existing index drops. Columns that many queries filter on
-  outside the sorting key become proposals for a new index, which a trial then tests.
+- **Skip indexes** are measured, not guessed: the table's "Indexes & projections" tab plans the logged
+  queries with `EXPLAIN indexes = 1` and shows what each existing index drops. Columns that many queries
+  filter on outside the sorting key become proposals for a new index, which a trial then tests.
+- **Projections** are listed on the same tab with their query, rows, size on disk, the parts they are
+  built in and how many logged SELECTs ClickHouse answered from them.
+- Opening an index or a projection there lists the query shapes that use it, each with its plan: the
+  index steps in order and the parts and granules every step left.
 - **Trials** build a baseline and a candidate table in a scratch database, copy the same sample of
   rows into both, merge them, and compare sizes, column scans, insert throughput and replayed queries.
   Each replayed query is also planned with `EXPLAIN` on both tables, so the result shows which indexes
@@ -89,7 +94,8 @@ GRANT CREATE TABLE, DROP TABLE, INSERT, SELECT, OPTIMIZE ON scratch.* TO granule
 - Distinct-value estimates (used for the LowCardinality rule) exist only on servers that report
   `estimates.cardinality` in `system.parts_columns`.
 - Skip-index usage is not in system tables, so index findings are "review" items by size.
-- Trial tables are plain `MergeTree` with wide parts, whatever the production engine is.
+- Trial tables are plain `MergeTree` with wide parts, whatever the production engine is, and carry no
+  projections. A rebuild script recreates the table's projections.
 
 ## Releases
 

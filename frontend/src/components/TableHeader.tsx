@@ -8,7 +8,7 @@ import { CopyButton } from './CodeBlock';
 import { PageHeader } from './PageHeader';
 
 /** The header every page of one table shares: name, engine, the two actions and the section tabs. */
-export function TableHeader({ t, active, description }: { t: TableDetail; active: 'structure' | 'usage'; description?: ReactNode }) {
+export function TableHeader({ t, active, description }: { t: TableDetail; active: 'structure' | 'indexes' | 'usage'; description?: ReactNode }) {
   const args = [t.sourceId, t.database, t.name] as const;
   return (
     <>
@@ -31,6 +31,9 @@ export function TableHeader({ t, active, description }: { t: TableDetail; active
       <nav className="g-tabs" aria-label="Table sections" style={{ marginTop: description ? -8 : -16 }}>
         <Link to={routes.table(...args)} aria-current={active === 'structure' ? 'page' : undefined}>
           Structure
+        </Link>
+        <Link to={routes.indexes(...args)} aria-current={active === 'indexes' ? 'page' : undefined}>
+          Indexes &amp; projections
         </Link>
         <Link to={routes.usage(...args)} aria-current={active === 'usage' ? 'page' : undefined}>
           Usage
