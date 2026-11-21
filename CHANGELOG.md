@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.0](https://github.com/pixelweb-org/granulee/compare/v0.14.0...v0.15.0) (2026-11-21)
+
+
+### Features
+
+* say why untouched columns change size when a trial changes the key ([00ca7e8](https://github.com/pixelweb-org/granulee/commit/00ca7e8cb8daf5f56d5c227964c6d123329b4c93))
+
+
+### Bug Fixes
+
+* wrap a long table name in the page header on narrow screens ([00ca7e8](https://github.com/pixelweb-org/granulee/commit/00ca7e8cb8daf5f56d5c227964c6d123329b4c93))
+
 ## [0.14.0](https://github.com/pixelweb-org/granulee/compare/v0.13.0...v0.14.0) (2026-11-21)
 
 
