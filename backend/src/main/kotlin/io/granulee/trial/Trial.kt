@@ -31,7 +31,7 @@ data class TrialRequest(
     val dropIndexes: List<String> = emptyList(),
     val addIndexes: List<TrialIndex> = emptyList(),
     val rows: Long = 0,
-    val sampling: String = "even", // even | recent | where
+    val sampling: String = "even", // even | recent | where | all (the whole table; `rows` is then only what it held when the trial was set up)
     val where: String? = null,
     val replayQueries: Boolean = true,
     val measureInserts: Boolean = true,
@@ -52,9 +52,9 @@ data class TrialStep(val label: String, val state: String) // done | running | p
 /** What keeps a trial with this request from starting, worded for the person who set it up; null when nothing does. */
 internal fun TrialRequest.problem(): String? = when {
     database.isBlank() || table.isBlank() -> "Pick a table for the trial"
-    rows < 1 -> "Rows to copy must be at least 1"
+    rows < 1 && sampling != "all" -> "Rows to copy must be at least 1"
     runsPerQuery !in 1..20 -> "Runs per query must be 1 to 20"
-    sampling !in setOf("even", "recent", "where") -> "Unknown sampling method"
+    sampling !in setOf("even", "recent", "where", "all") -> "Unknown sampling method"
     sampling == "where" && where.isNullOrBlank() -> "Enter the WHERE clause for the sample"
     where.orEmpty().contains(';') -> "The WHERE clause must be a single expression"
     columns.isEmpty() -> "The candidate schema has no columns"

@@ -8,6 +8,7 @@ import io.granulee.sql.Sql
  * the sample is the most recent ones.
  */
 internal fun sampleFilter(request: TrialRequest, tableRows: Long, partitions: () -> List<PartitionRows>): String = when (request.sampling) {
+    "all" -> ""
     "where" -> " WHERE (${request.where})"
     "recent" -> recentPartitions(partitions(), request.rows)
     else -> {
@@ -17,6 +18,12 @@ internal fun sampleFilter(request: TrialRequest, tableRows: Long, partitions: ()
         if (every >= 2) " WHERE _part_offset % $every = 0" else ""
     }
 }
+
+/**
+ * The LIMIT that ends the copy at the wanted rows, with its leading space. A trial on the whole table has none:
+ * rows that arrived since it was set up belong to the table as well.
+ */
+internal fun sampleLimit(request: TrialRequest): String = if (request.sampling == "all") "" else " LIMIT ${request.rows}"
 
 /** The newest partitions that together hold the wanted rows. A table of one partition is read from its start. */
 private fun recentPartitions(newestFirst: List<PartitionRows>, rows: Long): String {

@@ -284,7 +284,8 @@ export interface TrialPlan {
   replayableQueries: number; // distinct SELECTs found in query_log (max 20)
 }
 
-export type Sampling = 'even' | 'recent' | 'where';
+// 'all' copies the whole table: no filter, no limit; `rows` is then what the table held when the trial was set up.
+export type Sampling = 'even' | 'recent' | 'where' | 'all';
 
 export interface TrialRequest {
   sourceId: string;

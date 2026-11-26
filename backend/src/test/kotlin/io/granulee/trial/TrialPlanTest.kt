@@ -88,6 +88,15 @@ class SamplingTest {
     }
 
     @Test
+    fun `a trial on the whole table copies without a filter and without a limit`() {
+        val all = request.copy(sampling = "all")
+        // Whatever the row count says: it is from when the trial was set up, and the table may have grown.
+        assertEquals("", sampleFilter(all.copy(rows = 10), tableRows = 6000) { error("partitions are not asked for") })
+        assertEquals("", sampleLimit(all))
+        assertEquals(" LIMIT ${request.rows}", sampleLimit(request))
+    }
+
+    @Test
     fun `a WHERE sample is the person's own condition, in parentheses`() {
         assertEquals(" WHERE (a = 1 OR b = 2)", sampleFilter(request.copy(sampling = "where", where = "a = 1 OR b = 2"), 6000, none))
     }

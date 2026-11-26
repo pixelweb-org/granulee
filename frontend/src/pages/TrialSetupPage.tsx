@@ -192,7 +192,9 @@ function TrialForm({ plan, followUp }: { plan: TrialPlan; followUp: FollowUp | n
   const [ticked, setTicked] = useState<string[]>(() => (followUp ? [] : plan.recommendations.filter(startsTicked).map((r) => r.id)));
   const [name, setName] = useState(followUp ? `Codec follow-up of #${followUp.origin.id}` : `Trial of ${plan.table}`);
   const [rows, setRows] = useState(() => fmtInt(Math.min(plan.recommendedRows, plan.totalRows || plan.recommendedRows)));
-  const [sampling, setSampling] = useState<Sampling>('even');
+  const [sampling, setSampling] = useState<Exclude<Sampling, 'all'>>('even');
+  // The whole table instead of a sample: exact, and as large and slow as the table is.
+  const [wholeTable, setWholeTable] = useState(false);
   const [where, setWhere] = useState('');
   const [replayQueries, setReplayQueries] = useState(plan.replayableQueries > 0);
   const [measureInserts, setMeasureInserts] = useState(true);
@@ -227,9 +229,12 @@ function TrialForm({ plan, followUp }: { plan: TrialPlan; followUp: FollowUp | n
   );
   const changedKeys = (schema.partitionKey.trim() !== plan.partitionKey.trim() ? 1 : 0) + (schema.sortingKey.trim() !== plan.sortingKey.trim() ? 1 : 0);
   const n = parseInt(rows.replace(/[^0-9]/g, ''), 10) || 0;
-  const effectiveRows = plan.totalRows > 0 ? Math.min(n, plan.totalRows) : n;
-  const tooFew = n > 0 && n < 10e6 && plan.totalRows > 10e6;
-  const scratchNeeded = plan.totalRows > 0 ? effectiveRows * (plan.compressedBytes / plan.totalRows) * 2 : 0;
+  const effectiveRows = wholeTable ? plan.totalRows : plan.totalRows > 0 ? Math.min(n, plan.totalRows) : n;
+  const tooFew = !wholeTable && n > 0 && n < 10e6 && plan.totalRows > 10e6;
+  // The baseline and the candidate, the table with plain defaults, and the second baseline an insert is timed into,
+  // which is dropped again but has to fit while it is there. The codec comparison comes on top and is not counted.
+  const scratchTables = 2 + (plainDefaults ? 1 : 0) + (measureInserts ? 1 : 0);
+  const scratchNeeded = plan.totalRows > 0 ? effectiveRows * (plan.compressedBytes / plan.totalRows) * scratchTables : 0;
   const noSpace = plan.scratchFreeBytes != null && scratchNeeded > plan.scratchFreeBytes;
   const runsN = Math.max(1, parseInt(runs, 10) || 1);
   // The index in the form counts as soon as it is complete; "Add index" only makes room for another one.
@@ -249,7 +254,8 @@ function TrialForm({ plan, followUp }: { plan: TrialPlan; followUp: FollowUp | n
   const nothingChanged = changedKeys === 0 && changedCols.length === 0 && schema.dropIndexes.length === 0 && addIndexes.length === 0;
   // A trial without changes still has something to show when it compares codecs or measures plain defaults.
   const extras = [codecBakeoff ? 'compares codecs for the largest columns' : null, plainDefaults ? 'measures today\u2019s table against plain defaults' : null].filter(Boolean);
-  const canStart = plan.trialsEnabled && n > 0 && (!nothingChanged || extras.length > 0) && name.trim() !== '' && (sampling !== 'where' || where.trim() !== '');
+  const canStart =
+    plan.trialsEnabled && (wholeTable || n > 0) && (!nothingChanged || extras.length > 0) && name.trim() !== '' && (wholeTable || sampling !== 'where' || where.trim() !== '');
 
   const changes = [
     changedKeys ? `${changedKeys} ${changedKeys === 1 ? 'key' : 'keys'}` : null,
@@ -270,8 +276,8 @@ function TrialForm({ plan, followUp }: { plan: TrialPlan; followUp: FollowUp | n
       dropIndexes: schema.dropIndexes,
       addIndexes,
       rows: effectiveRows,
-      sampling,
-      where: sampling === 'where' ? where.trim() : null,
+      sampling: wholeTable ? 'all' : sampling,
+      where: !wholeTable && sampling === 'where' ? where.trim() : null,
       replayQueries,
       measureInserts,
       optimizeFinal,
@@ -549,36 +555,56 @@ function TrialForm({ plan, followUp }: { plan: TrialPlan; followUp: FollowUp | n
 
         <Card as="section">
           <StepHead step="Step 3" title="Sample size" />
+          <Checkbox checked={wholeTable} onChange={setWholeTable}>
+            Copy the whole table instead of a sample
+          </Checkbox>
+          {wholeTable ? (
+            <p className="g-notice" role="alert">
+              This copies every row of {plan.database}.{plan.table}
+              {plan.totalRows > 0 ? ` (${fmtRows(plan.totalRows)} rows, ${fmtBytes(plan.compressedBytes)} compressed)` : ''} into each of the {scratchTables} trial
+              tables. That takes about <strong>{scratchNeeded > 0 ? fmtBytes(scratchNeeded) : `${scratchTables} times the table's size`}</strong> of disk in{' '}
+              {plan.scratchDatabase || 'scratch'}, next to the table itself
+              {plan.scratchFreeBytes != null ? `; ${fmtBytes(plan.scratchFreeBytes)} are free` : ''}.
+              {codecBakeoff ? ' The codec comparison adds the largest columns once more for every codec it tries.' : ''} Copying and merging that much also takes
+              time and loads the server for as long as it runs. The tables stay until you remove the trial.
+            </p>
+          ) : null}
           <div className="grid-auto" style={{ alignItems: 'start', ...vars({ min: 280, gap: 16 }) }}>
             <TextInput
               label="Rows to copy"
               numeric
               inputMode="numeric"
-              value={rows}
+              disabled={wholeTable}
+              value={wholeTable ? (plan.totalRows > 0 ? fmtInt(plan.totalRows) : 'all') : rows}
               onChange={(e) => setRows(e.target.value)}
               help={
-                <>
-                  Recommended: {fmtInt(plan.recommendedRows)}
-                  {plan.totalRows > 0 ? ` of ${fmtRows(plan.totalRows)} rows (${fmtPct(plan.recommendedRows / plan.totalRows, 0)})` : ''}. Below 10 M the numbers get noisy.
-                </>
+                wholeTable ? (
+                  'Every row the table holds when the copy runs.'
+                ) : (
+                  <>
+                    Recommended: {fmtInt(plan.recommendedRows)}
+                    {plan.totalRows > 0 ? ` of ${fmtRows(plan.totalRows)} rows (${fmtPct(plan.recommendedRows / plan.totalRows, 0)})` : ''}. Below 10 M the numbers get noisy.
+                  </>
+                )
               }
             />
             <Select
               label="How rows are picked"
+              disabled={wholeTable}
               value={sampling}
-              onChange={(e) => setSampling(e.target.value as Sampling)}
-              help={sampling === 'even' ? 'Even spread keeps the data mix close to production.' : sampling === 'recent' ? 'Copies whole partitions, newest first.' : 'Rows matching your condition, up to the row count.'}
+              onChange={(e) => setSampling(e.target.value as Exclude<Sampling, 'all'>)}
+              help={wholeTable ? 'Every row is copied; nothing is picked.' : sampling === 'even' ? 'Even spread keeps the data mix close to production.' : sampling === 'recent' ? 'Copies whole partitions, newest first.' : 'Rows matching your condition, up to the row count.'}
             >
               <option value="even">Spread evenly across all partitions</option>
               <option value="recent">Most recent partitions first</option>
               <option value="where">Custom WHERE clause</option>
             </Select>
           </div>
-          {sampling === 'where' ? (
+          {!wholeTable && sampling === 'where' ? (
             <TextInput label="WHERE clause" value={where} onChange={(e) => setWhere(e.target.value)} placeholder="event_date >= today() - 30" help="Without the WHERE keyword." />
           ) : null}
           {tooFew ? <p className="g-notice">Fewer than 10 M rows. Results may not reflect the full table.</p> : null}
-          {plan.totalRows > 0 && n > plan.totalRows ? (
+          {!wholeTable && plan.totalRows > 0 && n > plan.totalRows ? (
             <p className="body-sm muted">The table has {fmtInt(plan.totalRows)} rows, so the trial copies all of them.</p>
           ) : null}
         </Card>
@@ -619,9 +645,9 @@ function TrialForm({ plan, followUp }: { plan: TrialPlan; followUp: FollowUp | n
           <dt>Changes</dt>
           <dd className="g-num">{changes.length ? changes.join(' · ') : 'None yet'}</dd>
           <dt>Rows</dt>
-          <dd className="g-num">{fmtRows(effectiveRows)}</dd>
+          <dd className="g-num">{wholeTable ? `${plan.totalRows > 0 ? fmtRows(plan.totalRows) : 'all'} · whole table` : fmtRows(effectiveRows)}</dd>
           <dt>Scratch space needed</dt>
-          <dd className="g-num">{scratchNeeded > 0 ? `≈ ${fmtBytes(scratchNeeded)}` : '—'}</dd>
+          <dd className="g-num">{scratchNeeded > 0 ? `≈ ${fmtBytes(scratchNeeded)} · ${scratchTables} tables` : '—'}</dd>
           <dt>Free in {plan.scratchDatabase || 'scratch'}</dt>
           <dd className="g-num">{plan.scratchFreeBytes != null ? fmtBytes(plan.scratchFreeBytes) : 'unknown'}</dd>
         </dl>
