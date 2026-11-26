@@ -1,19 +1,20 @@
 import type {
+  ApplyPlan,
   ConnectionTest,
   DatabaseDetail,
   DatabaseList,
   Opportunity,
   Overview,
+  QueryExplain,
   Source,
   SourceInput,
   TableDetail,
-  TableRecommendations,
-  ApplyPlan,
   TableIndexUsage,
-  TableWhatIf,
-  TrialIndex,
+  TableRecommendations,
   TableUsage,
+  TableWhatIf,
   Trial,
+  TrialIndex,
   TrialList,
   TrialPlan,
   TrialRequest,
@@ -81,6 +82,9 @@ export const api = {
 
   tableUsage: (source: string, database: string, table: string) =>
     request<TableUsage>('GET', `/sources/${e(source)}/databases/${e(database)}/tables/${e(table)}/usage`),
+  /** Plans the latest run of one logged query shape with EXPLAIN. Nothing is executed. */
+  queryPlan: (source: string, database: string, table: string, hash: string) =>
+    request<QueryExplain>('GET', `${tablePath(source, database, table)}/query-plan${qs({ hash })}`),
   indexUsage: (source: string, database: string, table: string) =>
     request<TableIndexUsage>('GET', `/sources/${e(source)}/databases/${e(database)}/tables/${e(table)}/index-usage`),
   indexWhatIf: (source: string, database: string, table: string, candidates: TrialIndex[]) =>

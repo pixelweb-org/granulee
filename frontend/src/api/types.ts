@@ -603,6 +603,7 @@ export interface UsageQuery {
   avgReadBytes: number;
   avgResultRows: number;
   lastSeen: string;
+  hash?: string; // names the shape when it is planned with EXPLAIN; absent on servers before 0.20
 }
 
 export interface UsageColumn {
