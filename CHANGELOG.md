@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.20.0](https://github.com/pixelweb-org/granulee/compare/v0.19.5...v0.20.0) (2026-11-26)
+
+
+### Features
+
+* analyse a query shape with EXPLAIN from the Usage tab ([5e41adf](https://github.com/pixelweb-org/granulee/commit/5e41adf3503bd561859bc49381cd5d0eec567504))
+* let a trial copy the whole table instead of a sample ([4284fa6](https://github.com/pixelweb-org/granulee/commit/4284fa6f90af2a8118625d3f52aba5f00e6b4de8))
+* whole-table trials and EXPLAIN for a query shape on the Usage tab ([a9670ac](https://github.com/pixelweb-org/granulee/commit/a9670ace4475a362f5d675a4fc08ae2717c3e8af))
+
 ## [0.19.5](https://github.com/pixelweb-org/granulee/compare/v0.19.4...v0.19.5) (2026-11-21)
 
 
