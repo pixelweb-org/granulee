@@ -1,5 +1,6 @@
 package io.granulee.usage
 
+import io.granulee.BadRequestException
 import io.granulee.clickhouse.ChConnection
 import io.granulee.clickhouse.ChException
 import io.granulee.clickhouse.NOT_GRANULEE
@@ -66,78 +67,103 @@ class UsageService(private val sources: SourceService, private val snapshots: Sn
         )
     }
 
-    /** system.query_log for one table, under each of the names queries reach it by ("database.table"). */
-    private class TableLog(private val ch: ChConnection, private val days: Int, private val names: List<String>) {
-        private val scope = "event_date >= today() - $days AND type = 'QueryFinish' AND is_initial_query AND " +
-            "hasAny(tables, [${names.joinToString(", ") { Sql.lit(it) }}]) AND $NOT_GRANULEE"
-
-        // An asynchronous insert is logged twice: the client's INSERT, and the flush that carries the rows.
-        private val isInsert = "query_kind = 'Insert'"
-        private val writes = "query_kind IN ('Insert', 'AsyncInsertFlush')"
-
-        /** Counts, volumes and timings over the window. Throws when the log cannot be read. */
-        fun totals(tableRows: Long): Row = ch.first(
-            """
-            SELECT toInt64(countIf(query_kind = 'Select')) AS selects, toInt64(countIf($isInsert)) AS inserts, toInt64(countIf(query_kind != 'AsyncInsertFlush')) AS total,
-                   toInt64(sumIf(read_rows, query_kind = 'Select')) AS sel_rows, toInt64(sumIf(read_bytes, query_kind = 'Select')) AS sel_bytes,
-                   toInt64(sumIf(written_rows, $writes)) AS ins_rows, toInt64(sumIf(written_bytes, $writes)) AS ins_bytes,
-                   toFloat64(quantileExactIf(0.5)(query_duration_ms, query_kind = 'Select')) AS median_ms,
-                   toFloat64(quantileExactIf(0.95)(query_duration_ms, query_kind = 'Select')) AS p95_ms,
-                   toInt64(countIf(query_kind = 'Select' AND read_rows >= ${(tableRows / 2).coerceAtLeast(1)})) AS wide_scans,
-                   (SELECT toInt64(toUnixTimestamp(min(event_time))) FROM system.query_log WHERE event_date >= today() - $days) AS log_since
-            FROM system.query_log
-            WHERE $scope
-            """.trimIndent(),
-        ) ?: emptyMap()
-
-        fun perDay(): List<UsageDay> = ch.query(
-            """
-            SELECT toString(event_date) AS day, toInt64(countIf(query_kind = 'Select')) AS selects, toInt64(countIf($isInsert)) AS inserts
-            FROM system.query_log WHERE $scope GROUP BY event_date ORDER BY event_date
-            """.trimIndent(),
-        ).map { UsageDay(it.str("day"), it.long("selects"), it.long("inserts")) }
-
-        /** The most frequent SELECT shapes, with each one's share of the table's `selects`. */
-        fun shapes(selects: Long): List<UsageQuery> = ch.query(
-            """
-            SELECT substring(normalizeQuery(any(query)), 1, 4000) AS q, toInt64(count()) AS c,
-                   toFloat64(quantileExact(0.5)(query_duration_ms)) AS median_ms, toFloat64(quantileExact(0.95)(query_duration_ms)) AS p95_ms,
-                   toInt64(sum(query_duration_ms)) AS total_ms, toInt64(avg(read_rows)) AS avg_rows, toInt64(avg(read_bytes)) AS avg_bytes,
-                   toInt64(avg(result_rows)) AS avg_result, toInt64(toUnixTimestamp(max(event_time))) AS last_seen
-            FROM system.query_log
-            WHERE $scope AND query_kind = 'Select'
-            GROUP BY normalized_query_hash
-            ORDER BY c DESC
-            LIMIT 40
-            """.trimIndent(),
-        ).map {
-            UsageQuery(
-                it.str("q"), it.long("c"), if (selects > 0) it.long("c").toDouble() / selects else 0.0, it.double("median_ms"), it.double("p95_ms"),
-                it.long("total_ms"), it.long("avg_rows"), it.long("avg_bytes"), it.long("avg_result"), Instant.ofEpochSecond(it.long("last_seen")).toString(),
-            )
-        }
-
-        /** Per column, the SELECTs that read it. */
-        fun readBy(): Map<String, Long> {
-            // query_log names a column as database.table.column, with the Buffer table's name where the query used it.
-            val strip = names.joinToString(", ") { "startsWith(x, ${Sql.lit("$it.")}), substring(x, ${"$it.".length + 1})" }
-            return ch.query(
-                """
-                SELECT col, toInt64(count()) AS c
-                FROM (
-                    SELECT arrayJoin(arrayDistinct(arrayFilter(c -> c != '', arrayMap(x -> multiIf($strip, ''), columns)))) AS col
-                    FROM system.query_log WHERE $scope AND query_kind = 'Select'
-                )
-                GROUP BY col
-                """.trimIndent(),
-            ).associate { it.str("col") to it.long("c") }
-        }
-
-        fun users(): List<UsageUser> = ch.query(
-            """
-            SELECT user, toInt64(countIf(query_kind = 'Select')) AS selects, toInt64(countIf($isInsert)) AS inserts
-            FROM system.query_log WHERE $scope GROUP BY user ORDER BY selects + inserts DESC LIMIT 20
-            """.trimIndent(),
-        ).map { UsageUser(it.str("user"), it.long("selects"), it.long("inserts")) }
+    /**
+     * The most recent run of one of the table's query shapes, named by the hash the usage lists it with. Null when
+     * the log window no longer holds one.
+     */
+    fun example(sourceId: String, database: String, table: String, hash: String): LoggedSelect? {
+        // The hash goes into the statement: it has to be the number it claims to be.
+        if (hash.isEmpty() || hash.length > 20 || !hash.all(Char::isDigit)) throw BadRequestException("Not a query shape: $hash")
+        val source = sources.find(sourceId)
+        val ch = sources.connection(source)
+        val via = SystemTables.bufferTables(ch)["$database.$table"].orEmpty()
+        return TableLog(ch, source.queryLogWindowDays, listOf("$database.$table") + via).example(hash)?.let { (query, db) -> LoggedSelect(query, db, via) }
     }
+}
+
+/** system.query_log for one table, under each of the names queries reach it by ("database.table"). */
+internal class TableLog(private val ch: ChConnection, private val days: Int, private val names: List<String>) {
+    private val scope = "event_date >= today() - $days AND type = 'QueryFinish' AND is_initial_query AND " +
+        "hasAny(tables, [${names.joinToString(", ") { Sql.lit(it) }}]) AND $NOT_GRANULEE"
+
+    // An asynchronous insert is logged twice: the client's INSERT, and the flush that carries the rows.
+    private val isInsert = "query_kind = 'Insert'"
+    private val writes = "query_kind IN ('Insert', 'AsyncInsertFlush')"
+
+    /** Counts, volumes and timings over the window. Throws when the log cannot be read. */
+    fun totals(tableRows: Long): Row = ch.first(
+        """
+        SELECT toInt64(countIf(query_kind = 'Select')) AS selects, toInt64(countIf($isInsert)) AS inserts, toInt64(countIf(query_kind != 'AsyncInsertFlush')) AS total,
+               toInt64(sumIf(read_rows, query_kind = 'Select')) AS sel_rows, toInt64(sumIf(read_bytes, query_kind = 'Select')) AS sel_bytes,
+               toInt64(sumIf(written_rows, $writes)) AS ins_rows, toInt64(sumIf(written_bytes, $writes)) AS ins_bytes,
+               toFloat64(quantileExactIf(0.5)(query_duration_ms, query_kind = 'Select')) AS median_ms,
+               toFloat64(quantileExactIf(0.95)(query_duration_ms, query_kind = 'Select')) AS p95_ms,
+               toInt64(countIf(query_kind = 'Select' AND read_rows >= ${(tableRows / 2).coerceAtLeast(1)})) AS wide_scans,
+               (SELECT toInt64(toUnixTimestamp(min(event_time))) FROM system.query_log WHERE event_date >= today() - $days) AS log_since
+        FROM system.query_log
+        WHERE $scope
+        """.trimIndent(),
+    ) ?: emptyMap()
+
+    fun perDay(): List<UsageDay> = ch.query(
+        """
+        SELECT toString(event_date) AS day, toInt64(countIf(query_kind = 'Select')) AS selects, toInt64(countIf($isInsert)) AS inserts
+        FROM system.query_log WHERE $scope GROUP BY event_date ORDER BY event_date
+        """.trimIndent(),
+    ).map { UsageDay(it.str("day"), it.long("selects"), it.long("inserts")) }
+
+    /** The most frequent SELECT shapes, with each one's share of the table's `selects`. */
+    fun shapes(selects: Long): List<UsageQuery> = ch.query(
+        """
+        SELECT substring(normalizeQuery(any(query)), 1, 4000) AS q, toString(normalized_query_hash) AS h, toInt64(count()) AS c,
+               toFloat64(quantileExact(0.5)(query_duration_ms)) AS median_ms, toFloat64(quantileExact(0.95)(query_duration_ms)) AS p95_ms,
+               toInt64(sum(query_duration_ms)) AS total_ms, toInt64(avg(read_rows)) AS avg_rows, toInt64(avg(read_bytes)) AS avg_bytes,
+               toInt64(avg(result_rows)) AS avg_result, toInt64(toUnixTimestamp(max(event_time))) AS last_seen
+        FROM system.query_log
+        WHERE $scope AND query_kind = 'Select'
+        GROUP BY normalized_query_hash
+        ORDER BY c DESC
+        LIMIT 40
+        """.trimIndent(),
+    ).map {
+        UsageQuery(
+            it.str("q"), it.long("c"), if (selects > 0) it.long("c").toDouble() / selects else 0.0, it.double("median_ms"), it.double("p95_ms"),
+            it.long("total_ms"), it.long("avg_rows"), it.long("avg_bytes"), it.long("avg_result"), Instant.ofEpochSecond(it.long("last_seen")).toString(),
+            hash = it.str("h"),
+        )
+    }
+
+    /** Per column, the SELECTs that read it. */
+    fun readBy(): Map<String, Long> {
+        // query_log names a column as database.table.column, with the Buffer table's name where the query used it.
+        val strip = names.joinToString(", ") { "startsWith(x, ${Sql.lit("$it.")}), substring(x, ${"$it.".length + 1})" }
+        return ch.query(
+            """
+            SELECT col, toInt64(count()) AS c
+            FROM (
+                SELECT arrayJoin(arrayDistinct(arrayFilter(c -> c != '', arrayMap(x -> multiIf($strip, ''), columns)))) AS col
+                FROM system.query_log WHERE $scope AND query_kind = 'Select'
+            )
+            GROUP BY col
+            """.trimIndent(),
+        ).associate { it.str("col") to it.long("c") }
+    }
+
+    fun users(): List<UsageUser> = ch.query(
+        """
+        SELECT user, toInt64(countIf(query_kind = 'Select')) AS selects, toInt64(countIf($isInsert)) AS inserts
+        FROM system.query_log WHERE $scope GROUP BY user ORDER BY selects + inserts DESC LIMIT 20
+        """.trimIndent(),
+    ).map { UsageUser(it.str("user"), it.long("selects"), it.long("inserts")) }
+
+    /** The latest run of the shape with this hash: the query as it was sent and its session's default database. */
+    fun example(hash: String): Pair<String, String>? = ch.first(
+        """
+        SELECT query AS q, current_database AS d
+        FROM system.query_log
+        WHERE $scope AND query_kind = 'Select' AND normalized_query_hash = $hash
+        ORDER BY event_time DESC
+        LIMIT 1
+        """.trimIndent(),
+    )?.let { it.str("q") to it.str("d") }
 }

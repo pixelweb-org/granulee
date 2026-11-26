@@ -284,7 +284,8 @@ export interface TrialPlan {
   replayableQueries: number; // distinct SELECTs found in query_log (max 20)
 }
 
-export type Sampling = 'even' | 'recent' | 'where';
+// 'all' copies the whole table: no filter, no limit; `rows` is then what the table held when the trial was set up.
+export type Sampling = 'even' | 'recent' | 'where' | 'all';
 
 export interface TrialRequest {
   sourceId: string;
@@ -602,6 +603,7 @@ export interface UsageQuery {
   avgReadBytes: number;
   avgResultRows: number;
   lastSeen: string;
+  hash?: string; // names the shape when it is planned with EXPLAIN; absent on servers before 0.20
 }
 
 export interface UsageColumn {

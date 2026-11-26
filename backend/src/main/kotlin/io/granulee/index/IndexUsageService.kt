@@ -1,11 +1,14 @@
 package io.granulee.index
 
+import io.granulee.NotFoundException
 import io.granulee.explain.Explain
+import io.granulee.explain.QueryExplain
 import io.granulee.recommendation.Analyzer
 import io.granulee.scan.SnapshotStore
 import io.granulee.source.SourceService
 import io.granulee.sql.Sql
 import io.granulee.sql.rewriteBuffers
+import io.granulee.usage.UsageService
 import org.springframework.stereotype.Component
 
 /**
@@ -14,7 +17,23 @@ import org.springframework.stereotype.Component
  * executed; planning reads index files only.
  */
 @Component
-class IndexUsageService(private val sources: SourceService, private val snapshots: SnapshotStore) {
+class IndexUsageService(private val sources: SourceService, private val snapshots: SnapshotStore, private val usage: UsageService) {
+
+    /**
+     * How ClickHouse would run one logged query shape right now: its most recent run, planned with
+     * EXPLAIN indexes = 1 and EXPLAIN PIPELINE. Nothing is executed.
+     */
+    fun plan(sourceId: String, database: String, table: String, hash: String): QueryExplain {
+        val source = sources.find(sourceId)
+        val logged = usage.example(sourceId, database, table, hash)
+            ?: throw NotFoundException("The last ${source.queryLogWindowDays} days of query_log on ${source.name} no longer hold a run of this query. Reload the page.")
+        val ch = sources.connection(source)
+        val projections = Projections.of(ch, database, table, source.queryLogWindowDays).map { it.name }.toSet()
+        val settings = Explain.planned(ch) + mapOf("max_execution_time" to "30")
+        // A query on a Buffer table in front is planned against the table behind it.
+        val sql = rewriteBuffers(logged.query, logged.via, Sql.table(database, table))
+        return Explain.of(ch, sql, "$database.$table", pipeline = true, settings = settings, projections = projections, database = logged.database)
+    }
 
     fun usage(sourceId: String, database: String, table: String): TableIndexUsage {
         val source = sources.find(sourceId)

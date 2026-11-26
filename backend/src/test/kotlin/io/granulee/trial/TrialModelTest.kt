@@ -27,6 +27,9 @@ class TrialModelTest {
         assertEquals("Runs per query must be 1 to 20", request.copy(runsPerQuery = 0).problem())
         assertEquals("Runs per query must be 1 to 20", request.copy(runsPerQuery = 21).problem())
         assertEquals("Unknown sampling method", request.copy(sampling = "random").problem())
+        // The whole table needs no row count: it is whatever the table holds when the copy runs.
+        assertNull(request.copy(sampling = "all", rows = 0).problem())
+        assertEquals("Copy the whole table to baseline", TrialPhase.COPY_BASELINE.label(request.copy(sampling = "all")))
         assertEquals("Enter the WHERE clause for the sample", request.copy(sampling = "where", where = " ").problem())
         assertEquals("The WHERE clause must be a single expression", request.copy(where = "1; DROP TABLE t").problem())
         assertEquals("The candidate schema has no columns", request.copy(columns = emptyList()).problem())

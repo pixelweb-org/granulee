@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { QueryLogGuide, lacksQueryLog } from '../components/QueryLogGuide';
-import type { TableUsage, UsageQuery } from '../api/types';
+import type { QueryExplain, TableUsage, UsageQuery } from '../api/types';
 import { useApi } from '../hooks/useApi';
 import { useSources } from '../state/sources';
 import { Choice } from '../components/Button';
 import { BytesChart } from '../components/BytesChart';
 import { Card, StatTile } from '../components/Card';
+import { PlanDetail } from '../components/PlanSteps';
 import { Chart } from '../components/Chart';
 import { TableHeader } from '../components/TableHeader';
 import { PageHeader } from '../components/PageHeader';
@@ -70,6 +71,17 @@ export function UsagePage() {
   const { data: u, error, reload } = useApi(() => api.tableUsage(sourceId, database, table), [sourceId, database, table]);
   const [sort, setSort] = useState<Sort>('count');
   const [open, setOpen] = useState<string | null>(null);
+  // What EXPLAIN said about a shape, by its hash; asked for one shape at a time, on request.
+  const [plans, setPlans] = useState<Record<string, { busy: boolean; plan?: QueryExplain; error?: string }>>({});
+  const explain = async (hash: string) => {
+    setPlans((p) => ({ ...p, [hash]: { ...p[hash], busy: true, error: undefined } }));
+    try {
+      const plan = await api.queryPlan(sourceId, database, table, hash);
+      setPlans((p) => ({ ...p, [hash]: { busy: false, plan } }));
+    } catch (err) {
+      setPlans((p) => ({ ...p, [hash]: { ...p[hash], busy: false, error: err instanceof Error ? err.message : String(err) } }));
+    }
+  };
   const [all, setAll] = useState(false);
   const [showUnread, setShowUnread] = useState(false);
   const queries = useMemo(() => {
@@ -270,6 +282,7 @@ export function UsagePage() {
               <ol className="stack" style={{ listStyle: 'none', margin: 0, padding: 0, ...vars({ gap: 12 }) }}>
                 {shown.map((q) => {
                   const isOpen = open === q.query;
+                  const planned = q.hash ? plans[q.hash] : undefined;
                   return (
                     <li key={q.query} className="card card-row">
                       <span className={isOpen ? 'g-sql g-sql--full' : 'g-sql g-sql--clamp'}>{q.query}</span>
@@ -287,10 +300,35 @@ export function UsagePage() {
                           </Fact>
                           <Fact label="Last run">{fmtAgo(q.lastSeen) ?? '—'}</Fact>
                         </dl>
-                        <button type="button" className="cc-btn cc-btn--link" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : q.query)}>
-                          {isOpen ? 'Show less' : 'Show full query'}
-                        </button>
+                        <div className="row" style={vars({ gap: 16 })}>
+                          <button type="button" className="cc-btn cc-btn--link" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : q.query)}>
+                            {isOpen ? 'Show less' : 'Show full query'}
+                          </button>
+                          {q.hash ? (
+                            <button
+                              type="button"
+                              className="cc-btn cc-btn--secondary cc-btn--sm"
+                              disabled={planned?.busy}
+                              aria-busy={planned?.busy || undefined}
+                              onClick={() => void explain(q.hash!)}
+                            >
+                              {planned?.busy ? 'Asking ClickHouse…' : planned?.plan ? 'Run EXPLAIN again' : 'Analyse with EXPLAIN'}
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
+                      {planned?.error ? (
+                        <p className="status body-sm g-wrap" role="alert">
+                          <span aria-hidden="true" className="dot dot-error" />
+                          {planned.error}
+                        </p>
+                      ) : null}
+                      {planned?.plan ? (
+                        <div className="g-plan" aria-live="polite">
+                          <span className="eyebrow">How ClickHouse runs it now</span>
+                          <PlanDetail plan={planned.plan} />
+                        </div>
+                      ) : null}
                     </li>
                   );
                 })}
@@ -302,7 +340,8 @@ export function UsagePage() {
                   </button>
                 ) : null}
                 <span className="caption muted">
-                  Showing {fmtInt(shown.length)} of {fmtInt(queries.length)}. Literals are replaced by ?. Rows read is the average per run.
+                  Showing {fmtInt(shown.length)} of {fmtInt(queries.length)}. Literals are replaced by ?. Rows read is the average per run. “Analyse with EXPLAIN”
+                  plans the latest run of a shape with its real values; nothing is executed.
                 </span>
               </div>
             </section>

@@ -35,6 +35,12 @@ by a `WHERE` condition of your own. The setup page proposes 1% of the table, at 
 at most 100 million, and shows the scratch space that needs. Too small a sample compresses differently
 from the whole table; the page warns when it is.
 
+**Copy the whole table instead of a sample** takes every row. Nothing is extrapolated then, but every
+trial table is as large as the table itself: the baseline, the candidate, the table with plain defaults
+if you asked for it, and for a while the second baseline an insert is timed into. The setup page says how
+much disk that is and how much is free before you start. The copy and the merges take as long, and load
+the server as much, as the table is big.
+
 ## How queries are compared
 
 A replayed query runs several times on each table (five by default), the tables taking turns, and the

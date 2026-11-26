@@ -29,7 +29,8 @@ With `SELECT` on a table Granulee can ask ClickHouse about the logged queries on
 - `EXPLAIN QUERY TREE` during a scan, to learn which columns a query filters on. The query is analysed,
   not run; a read limit of one row keeps a scalar subquery inside it from reading data.
 - `EXPLAIN indexes = 1` on the table's "Indexes & projections" tab, to see what each index, projection
-  and key drops. This plans the query and reads index marks, not rows.
+  and key drops, and for a single query shape on the Usage tab when you ask for it. This plans the query
+  and reads index marks, not rows.
 - `EXPLAIN WHATIF` when you ask for an estimate of candidate skip indexes (servers that have it). This one
   **does read table data**: ClickHouse builds the hypothetical index in memory. It only runs on request.
 

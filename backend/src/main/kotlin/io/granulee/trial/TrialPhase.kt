@@ -25,7 +25,7 @@ internal enum class TrialPhase(val percent: Int) {
 
     fun label(request: TrialRequest): String = when (this) {
         CREATE_TABLES -> "Create baseline and candidate tables"
-        COPY_BASELINE -> "Copy ${Fmt.rows(request.rows)} rows to baseline"
+        COPY_BASELINE -> if (request.sampling == "all") "Copy the whole table to baseline" else "Copy ${Fmt.rows(request.rows)} rows to baseline"
         COPY_CANDIDATE -> "Copy the same rows to candidate"
         COPY_PLAIN -> "Copy the same rows to a table with plain defaults"
         MEASURE_SIZES -> if (request.optimizeFinal) "Full merge, measure sizes" else "Measure sizes"

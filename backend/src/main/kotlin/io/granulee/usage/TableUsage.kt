@@ -18,6 +18,17 @@ data class UsageQuery(
     val avgReadBytes: Long,
     val avgResultRows: Long,
     val lastSeen: String,
+    /** The shape's normalized_query_hash, as text because it does not fit a JSON number. Names the shape when it is planned again. */
+    val hash: String = "",
+)
+
+/** One logged SELECT as it ran, with its literal values: what ClickHouse can plan again. */
+data class LoggedSelect(
+    val query: String,
+    /** The default database of the session that ran it. */
+    val database: String,
+    /** Buffer tables in front of the table, under whose name the query may have reached it. */
+    val via: List<String>,
 )
 
 data class UsageColumn(

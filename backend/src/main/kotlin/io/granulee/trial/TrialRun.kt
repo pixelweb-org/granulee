@@ -123,14 +123,14 @@ internal class TrialRun(
         )
     }
 
-    /** Fills the baseline with the sample. Returns the rows it copied. */
+    /** Fills the baseline with the sample, or with the whole table. Returns the rows it copied. */
     private fun copyBaseline(live: LiveTable, copied: Copied): Long {
         journal.enter(TrialPhase.COPY_BASELINE)
         val production = Sql.table(trial.database, trial.table)
         val filter = sampleFilter(request, live.rows) { TrialTables.partitions(ch, trial.database, trial.table) }
-        val copy = statements.exec("INSERT INTO ${tables.base} (${copied.list}) SELECT ${copied.list} FROM $production$filter LIMIT ${request.rows}", INSERT_SETTINGS)
+        val copy = statements.exec("INSERT INTO ${tables.base} (${copied.list}) SELECT ${copied.list} FROM $production$filter${sampleLimit(request)}", INSERT_SETTINGS)
         val rows = TrialTables.rowCount(ch, tables.base)
-        if (rows == 0L) throw ChException("The sample selected no rows from ${trial.database}.${trial.table}")
+        if (rows == 0L) throw ChException(if (request.sampling == "all") "${trial.database}.${trial.table} has no rows" else "The sample selected no rows from ${trial.database}.${trial.table}")
         journal.say("Copied ${Fmt.count(rows)} rows from ${trial.database}.${trial.table} into the baseline (${seconds(copy.elapsedMs)})")
         return rows
     }

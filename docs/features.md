@@ -28,6 +28,11 @@ off the query text after `WHERE` instead. Sorting-key recommendations rest on th
 The Usage tab of a table shows how it was queried, from `system.query_log`: SELECT and INSERT volume,
 which columns are read and which are filtered on, the most frequent query shapes and who runs them.
 
+Every query shape has an **Analyse with EXPLAIN** button. It takes the latest run of that shape from the
+log, with its real values, and asks ClickHouse how it would run it now: how many granules and parts it
+reads, which index steps narrow it and by how much, whether a projection answers it, what moved to
+`PREWHERE`, and the pipeline. The query is planned, not executed.
+
 ## Indexes and projections
 
 The "Indexes & projections" tab of a table measures what is there instead of guessing.
