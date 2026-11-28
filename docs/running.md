@@ -1,7 +1,7 @@
 # Running Granulee
 
 Granulee is one process: a Spring Boot application that serves the API and the web page on port 8080 and
-keeps its own state as files in one directory. It needs no database of its own.
+keeps its own state in one directory: a SQLite database file and a key file. It needs no database server.
 
 ## With Docker
 
@@ -11,7 +11,15 @@ Every release is published as an image for amd64 and arm64:
 docker run -d --name granulee -p 127.0.0.1:8080:8080 -v granulee-data:/data ghcr.io/pixelweb-org/granulee:latest
 ```
 
-Open http://localhost:8080 and add a server under **Data sources**. The port is bound to this machine
+The first start creates the user `admin` with a random one-time password and prints it once, to standard
+output:
+
+```bash
+docker logs granulee
+```
+
+Open http://localhost:8080, sign in as `admin` with that password and choose your own; nothing else is
+reachable before you have. Then add a server under **Data sources**. The port is bound to this machine
 only; see [Security](#security) before you change that.
 
 | Tag | What |
@@ -72,7 +80,9 @@ Everything is set through environment variables.
 | --- | --- | --- |
 | `GRANULEE_DATA_DIR` | `./data` (`/data` in the image) | Where Granulee keeps its state. |
 | `GRANULEE_SECRET_KEY` | empty | Base64 of 32 random bytes, the key that encrypts stored ClickHouse passwords. Empty: Granulee creates `secret.key` in the data directory on first start. |
+| `GRANULEE_RESET_ADMIN` | empty | A user name. At start that account gets a new one-time password, printed once like the first one, and becomes an active admin. For a lost admin password; remove the variable again after that start. |
 | `SERVER_PORT` | `8080` | The port to listen on. |
+| `SERVER_FORWARD_HEADERS_STRATEGY` | unset | Set it to `native` behind a reverse proxy that terminates TLS and sends `X-Forwarded-Proto`, so the session cookie is marked `Secure`. Only then: without a proxy in front, anyone could send those headers. |
 | `TZ` | the container's | Time zone for scheduled scans and log lines. |
 
 A key for `GRANULEE_SECRET_KEY`:
@@ -85,30 +95,78 @@ openssl rand -base64 32
 
 | File | What |
 | --- | --- |
-| `sources.json` | The registered servers. Passwords are stored AES-GCM encrypted. |
-| `secret.key` | The encryption key, when `GRANULEE_SECRET_KEY` is not set. |
-| `snapshots/` | The last scan of each source. |
-| `history.json` | Size over time, one point per scan. |
-| `dismissed.json` | Recommendations you dismissed. |
-| `trials.json` | Trials and their results. |
+| `granulee.db` | A SQLite database with everything Granulee keeps: the users (passwords as Argon2id hashes) and their sessions, the registered servers (ClickHouse passwords AES-GCM encrypted), the last scan of each source, size over time, dismissed recommendations, and the trials with their results. While Granulee runs, `granulee.db-wal` and `granulee.db-shm` lie next to it. |
+| `secret.key` | The key that encrypts the stored ClickHouse passwords, when `GRANULEE_SECRET_KEY` is not set. |
 
-Back up the whole directory. Without the key (the file or the variable) the stored passwords cannot be
-read any more and have to be entered again. The trial tables themselves live in the scratch database of
-the ClickHouse server, not here.
+Back up the whole directory, with Granulee stopped or with `sqlite3 granulee.db ".backup copy.db"` while
+it runs. Without the key (the file or the variable) the stored ClickHouse passwords cannot be read any
+more and have to be entered again. The trial tables themselves live in the scratch database of the
+ClickHouse server, not here.
+
+### Coming from 0.20 or earlier
+
+Up to 0.20 Granulee had no users and kept its state as JSON files (`sources.json`, `snapshots/`,
+`history.json`, `dismissed.json`, `trials.json`). This release does not read them: it starts empty, with
+the `admin` of a first start. The old files are left where they are and can be deleted. Add your servers
+again under **Data sources**; `secret.key` is still used. Granulee no longer knows the trials of the old
+installation, so their tables stay in the scratch database until you drop them there: they are named
+`<table>_trial_<id>_base` and `<table>_trial_<id>_cand`.
+
+## Users
+
+Under **Users** an admin
+
+- adds a user, as `User` or `Admin`, with a one-time password. The admin passes that password on; the user
+  has to choose their own at the first sign-in. **Generate** makes one up in the browser.
+- deactivates and activates a user. A deactivated user is signed out at once and cannot sign in. Their data
+  sources, scans and trials are kept; their scheduled scans pause until the account is active again, and a
+  trial that is already running finishes.
+- resets a user's password to a new one-time password, which signs that user out everywhere.
+
+The last active admin cannot be deactivated, and nobody deactivates their own account. Users are not
+deleted.
+
+Every user has their own data sources, and with them their own scans, size history, recommendations, usage
+and index pages and trials. Nobody sees or uses another user's, an admin included: somebody else's source
+or trial answers exactly like one that does not exist. Two users may add the same ClickHouse server; each
+then has a source of their own for it.
+
+Everyone changes their own password under **Change password** in the sidebar. A password has at least 12
+characters; there are no other rules. If the only admin's password is lost, start Granulee once with
+`GRANULEE_RESET_ADMIN=admin` and read the new one-time password from the log.
 
 ## Security
 
-Granulee has **no login and no user management**. Whoever can open the page can
+Without a session only two things answer: `/api/health` and the sign-in. (The files the page is made of
+are served to anyone; they hold no data.) A signed-in user can, on their own data sources only,
 
-- read table schemas and the texts of logged queries of every registered server,
+- read table schemas and the texts of logged queries,
 - start trials, which copy sampled rows into the scratch database,
 - run the `ALTER TABLE` statements of a trial on the production table, if the ClickHouse user of that
   source is allowed to.
 
-So:
+How the sign-in is protected:
 
-- Do not expose it to the internet. Bind it to localhost, keep it inside a private network or VPN, or
-  put a reverse proxy with authentication in front of it.
+- Passwords are stored as Argon2id hashes. The first admin password and the one `GRANULEE_RESET_ADMIN`
+  makes are printed once and stored nowhere else.
+- A session is a random token in an `HttpOnly`, `SameSite=Lax` cookie; the database holds only its hash.
+  It ends after seven days without use, after thirty days at the latest, at **Sign out**, and when the
+  account is deactivated or gets a new password. Sessions survive a restart.
+- Requests that change something need a CSRF token.
+- After five failed sign-ins in a row a user name has to wait a minute, and longer after each further
+  failure, up to fifteen minutes; an address after twenty. Nothing is locked for good.
+
+What it does not do, so:
+
+- Granulee speaks plain HTTP. Put a reverse proxy with TLS in front of it before anyone reaches it over a
+  network you do not trust, and set `SERVER_FORWARD_HEADERS_STRATEGY=native` then. Without TLS, passwords
+  and session cookies travel in the clear.
+- An admin cannot see another user's data sources, but can reset that user's password and sign in with
+  it. Make admins of people you would trust with every registered server.
+- Whoever can read the data directory has the encrypted ClickHouse passwords and, unless
+  `GRANULEE_SECRET_KEY` is set elsewhere, the key to them. That key is one for the installation, not one
+  per user.
+- There are no API tokens: a script signs in like a browser does (`dev/add-source.sh` shows how).
 - Give the ClickHouse user only what you want Granulee to be able to do. With a user that can only read
   the system tables, Granulee can scan and recommend and nothing else. See
   [ClickHouse access](clickhouse-access.md).

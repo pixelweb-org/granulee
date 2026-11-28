@@ -3,6 +3,7 @@ import type {
   ConnectionTest,
   DatabaseDetail,
   DatabaseList,
+  Me,
   Opportunity,
   Overview,
   QueryExplain,
@@ -18,19 +19,35 @@ import type {
   TrialList,
   TrialPlan,
   TrialRequest,
+  User,
 } from './types';
+
+let onSignedOut: () => void = () => {};
+
+/** Called when the server no longer knows the session: it ran out, or the account was deactivated. */
+export function whenSignedOut(listener: () => void): void {
+  onSignedOut = listener;
+}
+
+/** The CSRF token the server hands out as a cookie; every request that changes something sends it back. */
+function csrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|; )XSRF-TOKEN=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`/api${path}`, {
-      method,
-      headers: body === undefined ? { Accept: 'application/json' } : { Accept: 'application/json', 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const token = method === 'GET' ? null : csrfToken();
+    if (token) headers['X-XSRF-TOKEN'] = token;
+    res = await fetch(`/api${path}`, { method, headers, credentials: 'same-origin', body: body === undefined ? undefined : JSON.stringify(body) });
   } catch {
     throw new Error('Cannot reach the Granulee server.');
   }
+  // A wrong password at the sign-in is a 401 too, and is that form's own business.
+  if (res.status === 401 && path !== '/auth/login') onSignedOut();
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
     try {
@@ -57,6 +74,24 @@ const tablePath = (sourceId: string, database: string, table: string) =>
   `/sources/${e(sourceId)}/databases/${e(database)}/tables/${e(table)}`;
 
 export const api = {
+  /** The signed-in account, or null when nobody is. */
+  me: async (): Promise<Me | null> => {
+    const res = await fetch('/api/auth/me', { headers: { Accept: 'application/json' }, credentials: 'same-origin' }).catch(() => null);
+    if (!res) throw new Error('Cannot reach the Granulee server.');
+    if (res.status === 401) return null;
+    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    return (await res.json()) as Me;
+  },
+  signIn: (username: string, password: string) => request<Me>('POST', '/auth/login', { username, password }),
+  signOut: () => request<void>('POST', '/auth/logout'),
+  changePassword: (current: string, password: string) => request<Me>('POST', '/auth/password', { current, password }),
+
+  users: () => request<User[]>('GET', '/users'),
+  createUser: (username: string, password: string, role: string) => request<User>('POST', '/users', { username, password, role }),
+  activateUser: (id: string) => request<User>('POST', `/users/${e(id)}/activate`),
+  deactivateUser: (id: string) => request<User>('POST', `/users/${e(id)}/deactivate`),
+  resetPassword: (id: string, password: string) => request<User>('POST', `/users/${e(id)}/password`, { password }),
+
   sources: () => request<Source[]>('GET', '/sources'),
   createSource: (input: SourceInput) => request<Source>('POST', '/sources', input),
   updateSource: (id: string, input: SourceInput) => request<Source>('PUT', `/sources/${e(id)}`, input),

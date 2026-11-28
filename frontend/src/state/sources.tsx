@@ -2,7 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { api } from '../api/client';
 import type { Source } from '../api/types';
 
-const KEY = 'granulee.source';
+/** The selection is remembered per user: one browser, several accounts. */
+const key = (userId: string) => `granulee.source.${userId}`;
 
 interface SourcesState {
   sources: Source[];
@@ -17,19 +18,19 @@ interface SourcesState {
 
 const Ctx = createContext<SourcesState | null>(null);
 
-function stored(): string | null {
+function stored(userId: string): string | null {
   try {
-    return localStorage.getItem(KEY) || null;
+    return localStorage.getItem(key(userId)) || null;
   } catch {
     return null;
   }
 }
 
-export function SourcesProvider({ children }: { children: ReactNode }) {
+export function SourcesProvider({ userId, children }: { userId: string; children: ReactNode }) {
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(stored);
+  const [selectedId, setSelectedId] = useState<string | null>(() => stored(userId));
 
   const reload = useCallback(async () => {
     try {
@@ -50,12 +51,12 @@ export function SourcesProvider({ children }: { children: ReactNode }) {
   const select = useCallback((id: string | null) => {
     setSelectedId(id);
     try {
-      if (id) localStorage.setItem(KEY, id);
-      else localStorage.removeItem(KEY);
+      if (id) localStorage.setItem(key(userId), id);
+      else localStorage.removeItem(key(userId));
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [userId]);
 
   const value = useMemo<SourcesState>(() => {
     const selected = sources.find((s) => s.id === selectedId) ?? null;

@@ -2,8 +2,6 @@ package io.granulee.scan
 
 import io.granulee.NotFoundException
 import io.granulee.facts.TableFacts
-import io.granulee.state.JsonStore
-import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.util.concurrent.ConcurrentHashMap
 
@@ -25,18 +23,23 @@ data class Snapshot(
     fun table(database: String, name: String): TableFacts? = tables.firstOrNull { it.database == database && it.name == name }
 }
 
-/** The last scan of every source, in memory and as snapshots/<source>.json. */
+/** Where the last scan of every source is kept. */
+interface SnapshotStorage {
+    fun all(): List<Snapshot>
+
+    /** Stores the snapshot in place of the source's earlier one. */
+    fun save(snapshot: Snapshot)
+
+    fun forget(sourceId: String)
+}
+
+/** The last scan of every source, in memory and in the storage. */
 @Component
-class SnapshotStore(private val store: JsonStore) {
-    private val log = LoggerFactory.getLogger(SnapshotStore::class.java)
+class SnapshotStore(private val storage: SnapshotStorage) {
     private val snapshots = ConcurrentHashMap<String, Snapshot>()
 
     init {
-        store.list(DIRECTORY).filter { it.endsWith(".json") }.forEach { file ->
-            runCatching { store.read("$DIRECTORY/$file", Snapshot::class.java) }
-                .onFailure { log.warn("Could not read the stored scan {}: {}", file, it.message) }
-                .getOrNull()?.let { snapshots[file.removeSuffix(".json")] = it }
-        }
+        storage.all().forEach { snapshots[it.sourceId] = it }
     }
 
     fun of(sourceId: String): Snapshot? = snapshots[sourceId]
@@ -47,18 +50,12 @@ class SnapshotStore(private val store: JsonStore) {
             ?: throw NotFoundException("Table $database.$table was not in the last scan of $sourceName. Scan the source first.")
 
     fun save(snapshot: Snapshot) {
+        storage.save(snapshot)
         snapshots[snapshot.sourceId] = snapshot
-        store.write(file(snapshot.sourceId), snapshot)
     }
 
     fun forget(sourceId: String) {
+        storage.forget(sourceId)
         snapshots.remove(sourceId)
-        store.delete(file(sourceId))
-    }
-
-    private fun file(sourceId: String) = "$DIRECTORY/$sourceId.json"
-
-    private companion object {
-        const val DIRECTORY = "snapshots"
     }
 }

@@ -3,7 +3,7 @@ package io.granulee.trial
 import io.granulee.explain.QueryAnalyze
 import io.granulee.explain.QueryExplain
 
-// What a finished trial measured. Part of the trial in the API and in trials.json.
+// What a finished trial measured. Part of the trial in the API and in the storage.
 
 data class TrialMetric(
     val key: String,

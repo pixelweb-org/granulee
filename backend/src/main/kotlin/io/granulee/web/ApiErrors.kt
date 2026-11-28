@@ -1,6 +1,8 @@
 package io.granulee.web
 
 import io.granulee.BadRequestException
+import io.granulee.ForbiddenException
+import io.granulee.NotSignedInException
 import io.granulee.NotFoundException
 import io.granulee.clickhouse.ChException
 import org.slf4j.LoggerFactory
@@ -24,6 +26,12 @@ class ApiErrors {
     @ExceptionHandler(BadRequestException::class, HttpMessageNotReadableException::class, MissingServletRequestParameterException::class)
     fun badRequest(e: Exception) =
         error(HttpStatus.BAD_REQUEST, if (e is BadRequestException) e.message else "The request could not be read")
+
+    @ExceptionHandler(NotSignedInException::class)
+    fun notSignedIn(e: NotSignedInException) = error(HttpStatus.UNAUTHORIZED, e.message)
+
+    @ExceptionHandler(ForbiddenException::class)
+    fun forbidden(e: ForbiddenException) = error(HttpStatus.FORBIDDEN, e.message)
 
     /** The ClickHouse server refused or could not be reached. */
     @ExceptionHandler(ChException::class)

@@ -28,7 +28,7 @@ class TrialRunTest {
     )
 
     private fun trial(request: TrialRequest) = Trial(
-        id = "7f3a", name = "t", sourceId = "s1", sourceName = "local", database = "analytics", table = "events", status = "running", error = null,
+        id = "7f3a", ownerId = "u1", name = "t", sourceId = "s1", sourceName = "local", database = "analytics", table = "events", status = "running", error = null,
         createdAt = "2026-11-21T10:00:00Z", finishedAt = null, progress = 0,
         steps = TrialPhase.of(request).map { TrialStep(it.label(request), "pending") },
         request = request, scratchDatabase = "scratch", baseTable = "events_trial_7f3a_base", candTable = "events_trial_7f3a_cand",

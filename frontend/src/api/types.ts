@@ -1,6 +1,26 @@
 // API contract between the Spring Boot backend (/api/**) and the React frontend.
 // All sizes are bytes, all times ISO-8601 strings, all durations milliseconds unless named otherwise.
 // Errors: non-2xx responses carry `{ "message": string }`.
+// Everything but /api/health and POST /api/auth/login needs a session: 401 means "sign in", and a signed-in
+// user only ever gets their own data sources and trials; somebody else's ids answer 404.
+
+export type Role = 'admin' | 'user';
+
+/** The signed-in account. */
+export interface Me {
+  id: string;
+  username: string;
+  role: Role;
+  /** The password is a one-time one: nothing but choosing a new one is allowed until that is done. */
+  mustChangePassword: boolean;
+}
+
+/** An account as an admin sees it. */
+export interface User extends Me {
+  active: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
 
 export type Health = 'healthy' | 'unreachable' | 'unknown';
 export type Protocol = 'https' | 'http';
@@ -538,6 +558,8 @@ export interface TrialResult {
 
 export interface Trial {
   id: string; // 4 hex chars
+  /** The user who started it; always the signed-in one. */
+  ownerId: string;
   name: string;
   sourceId: string;
   sourceName: string;

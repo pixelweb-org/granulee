@@ -15,7 +15,7 @@ import kotlin.test.assertTrue
  * The README's table of packages is in the same order.
  */
 class PackageDependenciesTest {
-    private val order = listOf("sql", "clickhouse", "state", "facts", "explain", "recommendation", "scan", "source", "trial", "usage", "index", "explorer", "web")
+    private val order = listOf("sql", "clickhouse", "state", "user", "facts", "explain", "recommendation", "scan", "source", "trial", "usage", "index", "explorer", "sqlite", "web")
 
     // What a package may hold without knowing Spring or a server: it is tested with plain objects.
     private val plain = setOf("sql", "facts")
@@ -54,10 +54,12 @@ class PackageDependenciesTest {
     }
 
     @Test
-    fun `only the connection package knows the ClickHouse client, and only the store and the key file touch the file system`() {
+    fun `only the connection package knows the ClickHouse client, only the sqlite package the database, and only the data directory, the database and the key file touch the file system`() {
         val all = sources()
         fun users(prefix: String) = all.flatMap { (pkg, files) -> files.filter { file -> imports(file).any { it.startsWith(prefix) } }.map { "$pkg/${it.name}" } }.sorted()
         assertEquals(listOf("clickhouse/ChConnections.kt", "clickhouse/HttpChConnection.kt"), users("com.clickhouse"))
-        assertEquals(listOf("source/PasswordCipher.kt", "state/JsonStore.kt"), users("java.nio.file"))
+        assertEquals(listOf("source/PasswordCipher.kt", "sqlite/SqliteDatabase.kt", "state/DataDir.kt"), users("java.nio.file"))
+        // Every feature keeps its state behind a Storage interface of its own; another database is another package.
+        assertEquals(listOf("sqlite/SqliteDatabase.kt", "sqlite/SqliteStorage.kt"), (users("org.sqlite") + users("org.springframework.jdbc") + users("java.sql")).distinct().sorted())
     }
 }

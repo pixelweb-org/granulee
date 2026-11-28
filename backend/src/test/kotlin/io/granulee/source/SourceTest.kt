@@ -1,16 +1,21 @@
 package io.granulee.source
 
 import io.granulee.BadRequestException
+import io.granulee.InMemorySourceStorage
+import io.granulee.NotSignedInException
+import io.granulee.SignedIn
 import io.granulee.NotFoundException
 import io.granulee.clickhouse.ChConnections
 import io.granulee.scan.QueryLogStatus
 import io.granulee.scan.Snapshot
 import io.granulee.state.GranuleeProperties
-import io.granulee.state.JsonStore
+import io.granulee.state.DataDir
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -21,7 +26,7 @@ class SourceRecordTest {
     private val now = Instant.parse("2026-11-21T12:00:00Z")
 
     private fun source(schedule: String, lastScanAt: String? = null) = SourceRecord(
-        "s1", "local", "http", "localhost", 8123, "granulee", "c2VjcmV0", "", "tmp_*", schedule, 30, true, "scratch",
+        "s1", "u1", "local", "http", "localhost", 8123, "granulee", "c2VjcmV0", "", "tmp_*", schedule, 30, true, "scratch",
         lastScan = lastScanAt?.let { LastScan(it, 120, null) },
     )
 
@@ -70,11 +75,18 @@ class SourceServiceTest {
     @TempDir
     lateinit var dir: Path
 
+    private val storage = InMemorySourceStorage()
+
     private fun service(): SourceService {
         val props = GranuleeProperties(dataDir = dir.toString())
-        val store = JsonStore(props)
-        return SourceService(SourceRepository(store), PasswordCipher(props, store), ChConnections())
+        return SourceService(SourceRepository(storage), PasswordCipher(props, DataDir(props)), ChConnections())
     }
+
+    @BeforeTest
+    fun signIn() = SignedIn.be("u1")
+
+    @AfterTest
+    fun signOut() = SignedIn.nobody()
 
     private val input = SourceInput(name = " prod ", protocol = "https", host = " ch.example.com ", port = 8443, username = " reader ", password = "s3cret", scratchDatabase = "scratch")
 
@@ -82,7 +94,8 @@ class SourceServiceTest {
     fun `a source is stored trimmed, with its password encrypted, and survives a restart`() {
         val created = service().create(input)
         assertEquals(listOf("prod", "ch.example.com", "reader"), listOf(created.name, created.host, created.username))
-        assertTrue(created.passwordEnc.isNotEmpty() && "s3cret" !in Files.readString(dir.resolve("sources.json")))
+        assertTrue(created.passwordEnc.isNotEmpty() && "s3cret" !in storage.all().toString())
+        assertEquals("u1", created.ownerId)
         assertEquals(listOf(created), service().all())
     }
 
@@ -124,6 +137,34 @@ class SourceServiceTest {
     }
 
     @Test
+    fun `a request reaches its own user's sources only`() {
+        val service = service()
+        val mine = service.create(input)
+        val theirs = SignedIn.`as`("u2") { service.create(input) } // the same name is free for another user
+        assertEquals(listOf(mine), service.all())
+        assertEquals(mine, service.find(mine.id))
+        // Somebody else's source reads exactly like one that does not exist, whatever is tried with it.
+        val gone = "Data source ${theirs.id} does not exist"
+        assertEquals(gone, assertFailsWith<NotFoundException> { service.find(theirs.id) }.message)
+        assertEquals(gone, assertFailsWith<NotFoundException> { service.update(theirs.id, input.copy(name = "taken")) }.message)
+        assertEquals(gone, assertFailsWith<NotFoundException> { service.delete(theirs.id) }.message)
+        assertEquals(gone, assertFailsWith<NotFoundException> { service.test(input.copy(id = theirs.id, password = null)) }.message)
+        assertEquals(listOf(theirs), SignedIn.`as`("u2") { service.all() })
+    }
+
+    @Test
+    fun `without a signed-in user nothing is found, and work that runs by itself names the source`() {
+        val service = service()
+        val created = service.create(input)
+        SignedIn.nobody()
+        assertFailsWith<NotSignedInException> { service.all() }
+        assertFailsWith<NotSignedInException> { service.find(created.id) }
+        assertFailsWith<NotSignedInException> { service.create(input.copy(name = "other")) }
+        assertEquals(created, service.get(created.id))
+        assertEquals(listOf(created), service.everyones())
+    }
+
+    @Test
     fun `a connection test without a host does not try to connect`() {
         assertEquals(ConnectionTest(false, null, null, "Enter a host first"), service().test(input.copy(host = " ")))
     }
@@ -131,12 +172,12 @@ class SourceServiceTest {
     @Test
     fun `passwords come back out as they went in, and differ on disk each time`() {
         val props = GranuleeProperties(dataDir = dir.toString())
-        val cipher = PasswordCipher(props, JsonStore(props))
+        val cipher = PasswordCipher(props, DataDir(props))
         val stored = cipher.encrypt("s3cret")
         assertEquals("s3cret", cipher.decrypt(stored))
         assertTrue(stored != cipher.encrypt("s3cret"))
         assertEquals("", cipher.decrypt(""))
         // The key file written on first use opens the passwords after a restart.
-        assertEquals("s3cret", PasswordCipher(props, JsonStore(props)).decrypt(stored))
+        assertEquals("s3cret", PasswordCipher(props, DataDir(props)).decrypt(stored))
     }
 }

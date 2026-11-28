@@ -11,7 +11,7 @@ import kotlin.test.assertTrue
 
 class TrialPlanTest {
     private val gib = 1L shl 30
-    private val source = SourceRecord("s1", "local", "http", "localhost", 8123, "u", "", "", "", "daily", 30, trialsEnabled = true, scratchDatabase = "scratch")
+    private val source = SourceRecord("s1", "u1", "local", "http", "localhost", 8123, "u", "", "", "", "daily", 30, trialsEnabled = true, scratchDatabase = "scratch")
 
     private fun column(name: String, type: String, codec: String = "", kind: String = "", compressed: Long = gib, cardinality: Long? = null) =
         ColumnFacts(name, type, codec, compressed, 8 * compressed, kind, "", false, false, cardinality)

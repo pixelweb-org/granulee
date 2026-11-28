@@ -56,6 +56,7 @@ class TrialModelTest {
     }
 
     private fun trial(status: String = "running", apply: String? = null, optimize: String? = null) = Trial(
+        ownerId = "u1",
         id = "7f3a", name = "t", sourceId = "s1", sourceName = "local", database = "analytics", table = "events", status = status, error = null,
         createdAt = "2026-11-21T10:00:00Z", finishedAt = null, progress = 38,
         steps = listOf(TrialStep("a", "done"), TrialStep("b", "running"), TrialStep("c", "pending")),

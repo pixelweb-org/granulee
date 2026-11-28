@@ -2,6 +2,7 @@
 # Runs the backend and the frontend dev server together. Ctrl+C stops both.
 # Started by `make dev`. It starts nothing else: point Granulee at a ClickHouse under Data sources,
 # or use `make clickhouse seed` and `make source` for a local one with sample data.
+# On an empty data directory the backend prints the one-time password of the user "admin" here.
 set -eu
 cd "$(dirname "$0")/.."
 

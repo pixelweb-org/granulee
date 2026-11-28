@@ -31,8 +31,15 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("tools.jackson.module:jackson-module-kotlin")
     implementation("com.clickhouse:client-v2:0.11.2")
+    // Login, sessions and CSRF protection; Argon2 hashing needs BouncyCastle.
+    implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.87")
+    // Granulee's own state: one SQLite file in the data directory.
+    implementation("org.springframework:spring-jdbc")
+    implementation("org.xerial:sqlite-jdbc:3.54.1.0")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

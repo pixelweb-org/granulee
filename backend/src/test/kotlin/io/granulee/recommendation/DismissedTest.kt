@@ -2,18 +2,14 @@ package io.granulee.recommendation
 
 import io.granulee.facts.ColumnFacts
 import io.granulee.facts.TableFacts
-import io.granulee.state.GranuleeProperties
-import io.granulee.state.JsonStore
-import org.junit.jupiter.api.io.TempDir
-import java.nio.file.Path
+import io.granulee.InMemoryDismissedStorage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class DismissedTest {
-    @TempDir
-    lateinit var dir: Path
+    private val storage = InMemoryDismissedStorage()
 
-    private fun store() = DismissedStore(JsonStore(GranuleeProperties(dataDir = dir.toString())))
+    private fun store() = DismissedStore(storage)
 
     private val gib = 1L shl 30
     private val table = TableFacts(
@@ -37,6 +33,10 @@ class DismissedTest {
         store().clear("s1", "analytics", "events")
         assertEquals(emptySet(), store().of("s1", "analytics", "events"))
         assertEquals(setOf("codec:name"), store().of("s1", "analytics", "users"))
+        // A removed source takes what was dismissed on it along.
+        store().apply { add("s2", "analytics", "users", "codec:name") }.forget("s1")
+        assertEquals(emptySet(), store().of("s1", "analytics", "users"))
+        assertEquals(setOf("codec:name"), store().of("s2", "analytics", "users"))
     }
 
     @Test

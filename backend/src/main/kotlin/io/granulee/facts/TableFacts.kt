@@ -5,7 +5,7 @@ import io.granulee.sql.mentions
 import io.granulee.sql.predicates
 
 // What a scan knows about one table. Everything here comes from system tables; table data is never read.
-// These classes are the format of snapshots/<source>.json.
+// These classes are the format a scan is stored in.
 
 data class ColumnFacts(
     val name: String,

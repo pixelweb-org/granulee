@@ -4,6 +4,7 @@ import io.granulee.BadRequestException
 import io.granulee.scan.SnapshotStore
 import io.granulee.source.SourceService
 import io.granulee.sql.normalizeKey
+import io.granulee.user.CurrentUser
 import org.springframework.stereotype.Component
 import java.time.Instant
 
@@ -28,15 +29,16 @@ class TrialService(
         }
     }
 
-    fun find(id: String): Trial = trials.get(id)
+    fun find(id: String): Trial = trials.owned(id)
 
-    fun latestCompleted(sourceId: String, database: String, table: String): Trial? = trials.all()
+    fun latestCompleted(sourceId: String, database: String, table: String): Trial? = trials.mine()
         .filter { it.sourceId == sourceId && it.database == database && it.table == table && it.status == Status.COMPLETED }
         .maxByOrNull { it.createdAt }
 
     fun list(sourceId: String?): TrialList {
-        val listed = trials.all().filter { sourceId.isNullOrBlank() || it.sourceId == sourceId }.sortedByDescending { it.createdAt }
-        val free = if (sourceId.isNullOrBlank()) null else runCatching { TrialTables.freeBytes(sources.connection(sources.find(sourceId))) }.getOrNull()
+        val listed = trials.mine().filter { sourceId.isNullOrBlank() || it.sourceId == sourceId }.sortedByDescending { it.createdAt }
+        val source = if (sourceId.isNullOrBlank()) null else sources.find(sourceId)
+        val free = source?.let { runCatching { TrialTables.freeBytes(sources.connection(it)) }.getOrNull() }
         return TrialList(listed, listed.sumOf { it.scratchBytes }, free)
     }
 
@@ -54,6 +56,7 @@ class TrialService(
         val id = trials.newId()
         val trial = Trial(
             id = id,
+            ownerId = CurrentUser.id(),
             name = request.name.trim().ifEmpty { "Trial of ${request.table}" },
             sourceId = source.id,
             sourceName = source.name,

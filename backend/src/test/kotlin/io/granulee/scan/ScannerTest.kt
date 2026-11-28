@@ -1,12 +1,10 @@
 package io.granulee.scan
 
+import io.granulee.InMemoryHistoryStorage
+import io.granulee.InMemorySnapshotStorage
 import io.granulee.NotFoundException
 import io.granulee.clickhouse.FakeClickHouse
 import io.granulee.clickhouse.Row
-import io.granulee.state.GranuleeProperties
-import io.granulee.state.JsonStore
-import org.junit.jupiter.api.io.TempDir
-import java.nio.file.Path
 import java.time.Instant
 import java.time.LocalDate
 import kotlin.test.Test
@@ -127,8 +125,8 @@ class SizeHistoryTest {
     }
 
     @Test
-    fun `the history is kept across restarts and forgets a removed source`(@TempDir dir: Path) {
-        val store = JsonStore(GranuleeProperties(dataDir = dir.toString()))
+    fun `the history is kept across restarts and forgets a removed source`() {
+        val store = InMemoryHistoryStorage()
         SizeHistory(store).apply {
             record("a", 10, today)
             record("b", 20, today)
@@ -142,8 +140,8 @@ class SizeHistoryTest {
 
 class SnapshotStoreTest {
     @Test
-    fun `snapshots are kept per source across restarts`(@TempDir dir: Path) {
-        val store = JsonStore(GranuleeProperties(dataDir = dir.toString()))
+    fun `snapshots are kept per source across restarts`() {
+        val store = InMemorySnapshotStorage()
         val snapshots = SnapshotStore(store)
         assertNull(snapshots.of("a"))
         snapshots.save(Snapshot(sourceId = "a", scannedAt = "2026-11-21T10:00:00Z"))
@@ -157,8 +155,8 @@ class SnapshotStoreTest {
     }
 
     @Test
-    fun `a table the last scan did not see is not found, with the source's name in the message`(@TempDir dir: Path) {
-        val snapshots = SnapshotStore(JsonStore(GranuleeProperties(dataDir = dir.toString())))
+    fun `a table the last scan did not see is not found, with the source's name in the message`() {
+        val snapshots = SnapshotStore(InMemorySnapshotStorage())
         val e = assertFailsWith<NotFoundException> { snapshots.requireTable("a", "prod", "analytics", "events") }
         assertEquals("Table analytics.events was not in the last scan of prod. Scan the source first.", e.message)
     }

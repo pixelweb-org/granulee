@@ -15,7 +15,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ExplorerTest {
-    private fun source(id: String, name: String) = SourceRecord(id, name, "http", "localhost", 8123, "u", "", "", "", "daily", 30, true, "scratch")
+    private fun source(id: String, name: String) = SourceRecord(id, "u1", name, "http", "localhost", 8123, "u", "", "", "", "daily", 30, true, "scratch")
 
     private fun table(database: String, name: String, compressed: Long) =
         TableFacts(database, name, "MergeTree", "", "", "id", "id", 0, compressed, compressed * 5, compressed, 1, 1, emptyList(), emptyList())

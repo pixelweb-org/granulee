@@ -43,15 +43,22 @@ You need Docker. This starts Granulee on http://localhost:8080:
 docker run -d --name granulee -p 127.0.0.1:8080:8080 -v granulee-data:/data ghcr.io/pixelweb-org/granulee:latest
 ```
 
-Open http://localhost:8080, go to **Data sources** and add your ClickHouse server (HTTP or HTTPS
-endpoint, user, password). The first scan starts right away.
+The first start creates the user `admin` and prints its one-time password once, to the container's log:
+
+```bash
+docker logs granulee
+```
+
+Open http://localhost:8080, sign in with it and choose your own password. Then go to **Data sources** and
+add your ClickHouse server (HTTP or HTTPS endpoint, user, password). The first scan starts right away.
 
 The image is built for amd64 and arm64. Every release is also tagged with its version, such as
 `ghcr.io/pixelweb-org/granulee:0.19.4`. To build it from a checkout instead, see
 [Running Granulee](docs/running.md).
 
-Granulee has **no login of its own**. Run it where only you can reach it; see
-[Running Granulee](docs/running.md#security).
+Nothing but the sign-in is reachable without an account. An admin adds further users under **Users**;
+every user has their own data sources, scans and trials and sees nobody else's. Before you let others
+reach it, read [Running Granulee](docs/running.md#security).
 
 ### Try it on sample data first
 
@@ -61,7 +68,13 @@ container with a sample schema that has findings:
 ```bash
 make clickhouse seed   # ClickHouse 25.8 on port 18123 with sample data and a query-log workload
 make dev               # backend on :8080, frontend dev server on :5173
-make source            # registers that ClickHouse in the running Granulee and scans it
+```
+
+The backend prints the one-time password of `admin` in that terminal. Sign in on http://localhost:5173,
+choose a password, then:
+
+```bash
+GRANULEE_USER=admin GRANULEE_PASSWORD='…' make source   # adds that ClickHouse as your data source and scans it
 ```
 
 Then open http://localhost:5173.
@@ -81,7 +94,7 @@ feature and what each one is used for.
 
 ## Documentation
 
-- [Running Granulee](docs/running.md): Docker, Compose, the jar, configuration, data directory, security.
+- [Running Granulee](docs/running.md): Docker, Compose, the jar, configuration, data directory, users, security.
 - [ClickHouse access](docs/clickhouse-access.md): grants per feature, the query log, what is read and written.
 - [What Granulee does, in detail](docs/features.md): scans, recommendations, indexes, codecs.
 - [Trials](docs/trials.md): how a trial runs, how to read its result, applying a candidate.
