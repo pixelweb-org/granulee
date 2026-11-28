@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.21.0](https://github.com/pixelweb-org/granulee/compare/v0.20.0...v0.21.0) (2026-11-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* the JSON files of 0.20 and earlier (sources.json, snapshots/, history.json, dismissed.json, trials.json) are no longer read. An upgraded installation starts empty with a new admin; data sources have to be added again, and scratch tables of earlier trials dropped by hand. The API needs a session and a CSRF token; `make source` needs GRANULEE_USER and GRANULEE_PASSWORD.
+
+### Features
+
+* users, sign-in and per-user data sources ([0c71225](https://github.com/pixelweb-org/granulee/commit/0c712257b78572bdfb479bdcde03a847278ed7bb))
+
 ## [0.20.0](https://github.com/pixelweb-org/granulee/compare/v0.19.5...v0.20.0) (2026-11-26)
 
 
