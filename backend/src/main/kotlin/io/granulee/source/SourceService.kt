@@ -7,23 +7,38 @@ import io.granulee.clickhouse.ChConnections
 import io.granulee.clickhouse.Endpoint
 import io.granulee.clickhouse.long
 import io.granulee.clickhouse.str
+import io.granulee.user.CurrentUser
 import org.springframework.stereotype.Component
 import java.time.Instant
 import java.util.UUID
 
 private val IDENTIFIER = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
 
-/** The registered ClickHouse servers: adding and changing them, reaching them, and whether they answer. */
+/**
+ * The registered ClickHouse servers: adding and changing them, reaching them, and whether they answer.
+ * A source belongs to the user who added it. `all` and `find` are what a request uses, and know only the
+ * signed-in user's sources: somebody else's is as absent as one that does not exist. Work that runs by itself
+ * for a source's owner (a scheduled scan, a running trial) uses `everyones` and `get`.
+ */
 @Component
 class SourceService(
     private val repository: SourceRepository,
     private val cipher: PasswordCipher,
     private val connections: ChConnections,
 ) {
-    fun all(): List<SourceRecord> = repository.all()
+    /** The signed-in user's sources. */
+    fun all(): List<SourceRecord> = CurrentUser.id().let { owner -> repository.all().filter { it.ownerId == owner } }
 
+    /** One of the signed-in user's sources. */
     fun find(id: String): SourceRecord =
         all().firstOrNull { it.id == id } ?: throw NotFoundException("Data source $id does not exist")
+
+    /** Every user's sources, for work that serves no request. Never the answer to one. */
+    fun everyones(): List<SourceRecord> = repository.all()
+
+    /** A source by its id alone, for work its owner has already started or scheduled. Never the answer to a request. */
+    fun get(id: String): SourceRecord =
+        repository.all().firstOrNull { it.id == id } ?: throw NotFoundException("Data source $id does not exist")
 
     fun connection(source: SourceRecord): ChConnection = connections.get(endpoint(source))
 
@@ -33,7 +48,8 @@ class SourceService(
     fun create(input: SourceInput): SourceRecord {
         validate(input, null)
         val record = SourceRecord(
-            id = UUID.randomUUID().toString().take(8),
+            id = generateSequence { UUID.randomUUID().toString().take(8) }.first { id -> repository.all().none { it.id == id } },
+            ownerId = CurrentUser.id(),
             name = input.name.trim(),
             protocol = input.protocol,
             host = input.host.trim(),
@@ -52,8 +68,8 @@ class SourceService(
     }
 
     fun update(id: String, input: SourceInput): SourceRecord {
-        validate(input, id)
         val old = find(id)
+        validate(input, id)
         connections.evict(endpoint(old))
         val updated = old.copy(
             name = input.name.trim(),
@@ -101,9 +117,9 @@ class SourceService(
         }
     }
 
-    /** Pings the server and stores what it found. */
+    /** Pings the server and stores what it found. Runs by itself too, so it takes any user's source. */
     fun checkHealth(id: String): SourceRecord? {
-        val source = all().firstOrNull { it.id == id } ?: return null
+        val source = repository.all().firstOrNull { it.id == id } ?: return null
         val now = Instant.now().toString()
         val status = try {
             val ch = connection(source)

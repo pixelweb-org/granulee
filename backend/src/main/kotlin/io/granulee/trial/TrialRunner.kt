@@ -28,7 +28,7 @@ class TrialRunner(
         cancelled.add(trial.id)
         runningQuery[trial.id]?.let { queryId ->
             runCatching {
-                sources.connection(sources.find(trial.sourceId)).exec("KILL QUERY WHERE query_id = ${Sql.lit(queryId)}")
+                sources.connection(sources.get(trial.sourceId)).exec("KILL QUERY WHERE query_id = ${Sql.lit(queryId)}")
             }
         }
     }
@@ -38,7 +38,7 @@ class TrialRunner(
         val journal = TrialJournal(TrialPhase.of(trial.request)) { change -> trials.update(id, change) }
         var ch: ChConnection? = null
         try {
-            val connection = sources.connection(sources.find(trial.sourceId))
+            val connection = sources.connection(sources.get(trial.sourceId))
             ch = connection
             val statements = TrialStatements(
                 trialId = id,

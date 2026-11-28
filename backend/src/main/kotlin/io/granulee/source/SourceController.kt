@@ -35,14 +35,17 @@ class SourceController(
     @PutMapping("/sources/{id}")
     fun update(@PathVariable id: String, @RequestBody input: SourceInput): SourceDto {
         sources.update(id, input)
-        return dto(sources.checkHealth(id) ?: sources.find(id))
+        sources.checkHealth(id)
+        return dto(sources.find(id))
     }
 
     @DeleteMapping("/sources/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     fun delete(@PathVariable id: String) {
-        sources.delete(id)
+        sources.find(id)
+        // What hangs on the source goes first, the source last.
         scans.forget(id)
+        sources.delete(id)
     }
 
     @PostMapping("/sources/test")

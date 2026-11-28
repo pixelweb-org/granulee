@@ -1,7 +1,6 @@
 package io.granulee.source
 
 import io.granulee.scan.ScanTarget
-import io.granulee.state.JsonStore
 import org.springframework.stereotype.Component
 import java.time.Duration
 import java.time.Instant
@@ -17,9 +16,10 @@ data class SourceStatus(
 
 data class LastScan(val at: String, val durationMs: Long, val error: String?)
 
-/** A data source as stored in sources.json. The password is AES-GCM encrypted. */
+/** A data source as it is stored. It belongs to the user who added it; the password is AES-GCM encrypted. */
 data class SourceRecord(
     val id: String,
+    val ownerId: String,
     val name: String,
     val protocol: String,
     val host: String,
@@ -54,36 +54,45 @@ fun SourceRecord.nextScanAt(now: Instant): Instant? {
 /** What of the source's server a scan covers. */
 fun SourceRecord.scanTarget() = ScanTarget(id, name, includeDatabases, excludeDatabases, scratchDatabase, queryLogWindowDays)
 
-data class SourceFile(val sources: List<SourceRecord> = emptyList())
+/** Where the data sources are kept. */
+interface SourceStorage {
+    fun all(): List<SourceRecord>
 
-/** The registered sources, in memory and as sources.json. */
+    /** Stores the record, in place of the one with its id if there is one. */
+    fun save(record: SourceRecord)
+
+    fun remove(id: String)
+}
+
+/** The registered sources of every user, in memory and in the storage. */
 @Component
-class SourceRepository(private val store: JsonStore) {
+class SourceRepository(private val storage: SourceStorage) {
     private val lock = Any()
-    private var records: List<SourceRecord> = store.read(FILE, SourceFile::class.java)?.sources ?: emptyList()
+    private var records: List<SourceRecord> = storage.all()
 
     fun all(): List<SourceRecord> = synchronized(lock) { records }
 
-    fun add(record: SourceRecord) = synchronized(lock) { save(records + record) }
+    fun add(record: SourceRecord) = synchronized(lock) {
+        storage.save(record)
+        records = records + record
+    }
 
-    fun replace(record: SourceRecord) = synchronized(lock) { save(records.map { if (it.id == record.id) record else it }) }
+    fun replace(record: SourceRecord) = synchronized(lock) {
+        storage.save(record)
+        records = records.map { if (it.id == record.id) record else it }
+    }
 
-    fun remove(id: String) = synchronized(lock) { save(records.filter { it.id != id }) }
+    fun remove(id: String) = synchronized(lock) {
+        storage.remove(id)
+        records = records.filter { it.id != id }
+    }
 
     /** Applies a change to the stored record, e.g. a new status or scan result. Null when the source is gone. */
     fun patch(id: String, change: (SourceRecord) -> SourceRecord): SourceRecord? = synchronized(lock) {
         val current = records.firstOrNull { it.id == id } ?: return null
         val next = change(current)
-        save(records.map { if (it.id == id) next else it })
+        storage.save(next)
+        records = records.map { if (it.id == id) next else it }
         next
-    }
-
-    private fun save(next: List<SourceRecord>) {
-        records = next
-        store.write(FILE, SourceFile(next))
-    }
-
-    private companion object {
-        const val FILE = "sources.json"
     }
 }

@@ -11,10 +11,14 @@
 | `deploy/compose.yaml` | A Compose file to run the published image. |
 | `Dockerfile` | Builds the image from a checkout with nothing but Docker. |
 
-Granulee keeps its own state as JSON files in `backend/data/` (override with `GRANULEE_DATA_DIR`):
-sources, the last scan per source, size history, dismissed recommendations and trials. ClickHouse
-passwords are stored AES-GCM encrypted; the key is `GRANULEE_SECRET_KEY` (base64, 32 bytes) or, if unset,
-a key file created in the data directory.
+Granulee keeps its own state in `backend/data/` (override with `GRANULEE_DATA_DIR`), in the SQLite file
+`granulee.db`: users and sessions, sources, the last scan per source, size history, dismissed
+recommendations and trials. ClickHouse passwords are stored AES-GCM encrypted; the key is
+`GRANULEE_SECRET_KEY` (base64, 32 bytes) or, if unset, a key file created in the data directory.
+
+The first start on an empty data directory creates the user `admin` and prints its one-time password in
+the backend's terminal. Sign in with it and choose a password. `make clean` removes the data directory,
+and with it every user.
 
 ## Run it locally
 
@@ -36,7 +40,7 @@ which proxies `/api` to the backend. Ctrl+C stops both.
 | `make backend`, `make frontend` | One of the two. |
 | `make clickhouse` | A ClickHouse 25.8 container on port 18123 to try Granulee on. |
 | `make seed` | Fills it with a sample schema and a query-log workload (drops and recreates the sample tables). |
-| `make source` | Registers that ClickHouse in the running Granulee and scans it. |
+| `make source` | Adds that ClickHouse as a data source of one Granulee user and scans it. Needs `GRANULEE_USER` and `GRANULEE_PASSWORD`: an account that has already chosen its own password. |
 | `make test` | Backend tests, then the frontend type check and build. |
 | `make build` | One jar with the frontend inside, in `backend/build/libs`. |
 | `make image` | The container image as `granulee:latest` in the local Docker daemon, built with Jib. |
@@ -54,8 +58,9 @@ the ones above it in this table, so there are no cycles; `PackageDependenciesTes
 | --- | --- |
 | `sql` | ClickHouse SQL as text, without a server: quoting, column types, key expressions, `engine_full`, rewriting logged queries, skip index definitions. |
 | `clickhouse` | The connection: `ChConnection` (query, exec) and its HTTP implementation, one client per endpoint. |
-| `state` | `JsonStore`, the JSON files in the data directory. |
-| `facts` | What a scan knows about a table (`TableFacts` and its parts). These classes are the format of `snapshots/*.json`. |
+| `state` | The data directory and Granulee's own settings. |
+| `user` | The accounts, their passwords and sessions, signing in and out, who may reach which route (`SecurityConfiguration`), and `CurrentUser`: who a request is from. `/api/auth`, `/api/users`. |
+| `facts` | What a scan knows about a table (`TableFacts` and its parts). These classes are the format a scan is stored in. |
 | `explain` | `EXPLAIN indexes = 1`, `EXPLAIN ANALYZE` and `EXPLAIN QUERY TREE`: asking the server and reading what it prints. |
 | `recommendation` | The rules (`Analyzer`) that turn table facts into recommendations, and the ones a person dismissed. |
 | `scan` | Reads a server's system tables and query log into a snapshot (`Scanner`); keeps the snapshots and the size history. |
@@ -64,10 +69,37 @@ the ones above it in this table, so there are no cycles; `PackageDependenciesTes
 | `usage` | How a table was queried, from `system.query_log`. |
 | `index` | What skip indexes, projections and keys do for the logged queries, and `EXPLAIN WHATIF` estimates. |
 | `explorer` | Overview, databases, the table page and its recommendations. |
+| `sqlite` | The storage: `granulee.db`, its schema, and the implementation of every feature's `…Storage` interface. |
 | `web` | Error answers, `/api/health`, serving the frontend. |
 
-`io.granulee` itself only holds the application class, the two errors a request can end in and the number
+`io.granulee` itself only holds the application class, the errors a request can end in and the number
 formatting of the texts.
+
+### Whose data it is
+
+A data source belongs to the user who added it, a trial to the user who started it; everything else
+(scans, history, dismissed recommendations) hangs on a source. A request finds only its own user's:
+
+- `SourceService.find` / `all` and `TrialRepository.owned` / `mine` ask `CurrentUser` and know nothing
+  else. Somebody else's id ends in the same `NotFoundException` as one that does not exist. Every
+  controller and service that serves a request goes through these.
+- Work that runs without a request (the scan schedule, a running trial, applying one) has no current
+  user, and these lookups refuse it. It uses `SourceService.get` / `everyones` and `TrialRepository.get` /
+  `all`, and acts for the owner the record names. Never answer a request from those.
+- `ApiSecurityTest` walks every registered route twice: without a session each must answer 401, and with
+  another user's ids each must answer 404. A new route is covered when it names its source or trial as
+  `{id}`; one that does not has to be sorted into that test's lists, or the test fails.
+
+### Storage
+
+A feature does not know where its state is kept. It declares an interface next to what it stores
+(`SourceStorage`, `SnapshotStorage`, `HistoryStorage`, `DismissedStorage`, `TrialStorage`, `UserStorage`,
+`SessionStorage`), and the `sqlite` package implements them all; `PackageDependenciesTest` checks that no
+other package imports SQLite or JDBC. Another database is another package like `sqlite`, with the beans of
+one of the two switched off. In `sqlite`, what is looked up by is a column and the rest of a source, a
+scan or a trial is one JSON document in the shape of its class. A schema change is a new entry in
+`SqliteDatabase.SCHEMA`; released entries are never edited. Tests of what sits on top use the stand-ins
+in `InMemoryStorage.kt`; `SqliteStorageTest` runs the real ones against a file.
 
 Within a package the controller only maps HTTP to a service. What decides something (the rules, the
 migration and DDL text, a trial's result and verdict, the index and usage summaries, the parsers) is in
@@ -78,9 +110,10 @@ Everything that talks to ClickHouse takes a `ChConnection`; the tests hand it a 
 ## Two contracts
 
 - **The API.** `frontend/src/api/types.ts` describes every response. Fields are added, not renamed.
-- **The data files.** `StoredFilesTest` loads files as a release wrote them and checks they are written
-  back byte for byte. Where a release adds fields, the test names them. An installation must be able to
-  upgrade without touching its data directory.
+- **The stored state.** `granulee.db` is read by later releases: sources, scans and trials are stored as
+  JSON documents of their classes, so fields are added with a default, not renamed or removed, and the
+  schema only grows by new entries in `SqliteDatabase.SCHEMA`. (The JSON files of 0.20 and earlier are not
+  read any more; see [Running Granulee](running.md#coming-from-020-or-earlier).)
 
 ## Frontend
 

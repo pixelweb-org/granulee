@@ -4,8 +4,11 @@
 #
 # VERSION pins a release (VERSION=0.19.4); without it the newest one is used.
 #
-# Granulee has no login of its own: the port below is bound to this machine only. Put a reverse proxy
-# with authentication in front of it before you open it to anyone else. See docs/running.md.
+# The first start prints the one-time password of the user "admin" once: docker logs granulee
+#
+# Granulee speaks plain HTTP: the port below is bound to this machine only. Put a reverse proxy with TLS
+# in front of it before you open it to anyone else, and set SERVER_FORWARD_HEADERS_STRATEGY=native then.
+# See docs/running.md.
 services:
   granulee:
     image: ghcr.io/pixelweb-org/granulee:${VERSION:-latest}
@@ -14,12 +17,14 @@ services:
     ports:
       - "127.0.0.1:${HTTP_PORT:-8080}:8080"
     volumes:
-      # Sources, scans and trials, together with the key that encrypts stored ClickHouse passwords.
+      # Users, sources, scans and trials (granulee.db), together with the key that encrypts stored ClickHouse passwords.
       - granulee-data:/data
     environment:
       TZ: ${TZ:-UTC}
       # Optional: base64 of 32 random bytes (openssl rand -base64 32). Unset, a key file is kept in /data.
       GRANULEE_SECRET_KEY: ${GRANULEE_SECRET_KEY:-}
+      # Only for a lost admin password: a user name that gets a new one-time password at the next start.
+      GRANULEE_RESET_ADMIN: ${GRANULEE_RESET_ADMIN:-}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/health"]
       interval: 30s

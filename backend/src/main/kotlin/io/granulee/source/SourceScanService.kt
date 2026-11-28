@@ -1,8 +1,10 @@
 package io.granulee.source
 
+import io.granulee.recommendation.DismissedStore
 import io.granulee.scan.Scanner
 import io.granulee.scan.SizeHistory
 import io.granulee.scan.SnapshotStore
+import io.granulee.user.UserService
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
@@ -12,13 +14,18 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.locks.ReentrantLock
 
-/** Scans the sources: when asked, when a source is added, and on each source's schedule. One scan per source at a time. */
+/**
+ * Scans the sources: when asked, when a source is added, and on each source's schedule. One scan per source at a time.
+ * A scan is done for the source's owner and needs nobody signed in; whether a request may start one is the caller's check.
+ */
 @Component
 class SourceScanService(
     private val sources: SourceService,
     private val scanner: Scanner,
     private val snapshots: SnapshotStore,
     private val history: SizeHistory,
+    private val dismissed: DismissedStore,
+    private val users: UserService,
 ) {
     private val log = LoggerFactory.getLogger(SourceScanService::class.java)
     private val locks = ConcurrentHashMap<String, ReentrantLock>()
@@ -44,7 +51,7 @@ class SourceScanService(
         val lock = locks.computeIfAbsent(sourceId) { ReentrantLock() }
         lock.lock()
         try {
-            val source = sources.find(sourceId)
+            val source = sources.get(sourceId)
             val started = Instant.now()
             val scanned = try {
                 val snapshot = scanner.scan(sources.connection(source), source.scanTarget(), started)
@@ -70,13 +77,16 @@ class SourceScanService(
     fun forget(sourceId: String) {
         snapshots.forget(sourceId)
         history.forget(sourceId)
+        dismissed.forget(sourceId)
     }
 
     @Scheduled(initialDelay = 5_000, fixedDelay = 60_000)
     fun tick() {
         val now = Instant.now()
         val healthRound = ticks++ % 5 == 0
-        sources.all().forEach { source ->
+        // Nothing runs by itself for an account that was deactivated: its sources wait until it is active again.
+        val active = users.activeIds()
+        sources.everyones().filter { it.ownerId in active }.forEach { source ->
             // A source that was never scanned is left alone here: its first scan starts when it is added.
             val due = source.lastScan?.let { source.nextScanAt(now) }
             if (due != null && !due.isAfter(now)) scanInBackground(source.id)

@@ -2,7 +2,7 @@
 #
 #   make dev                 backend and frontend dev server; Ctrl+C stops both
 #   make clickhouse seed     optional: a local ClickHouse with sample data to point Granulee at
-#   make source              registers that ClickHouse in the running Granulee
+#   make source              adds that ClickHouse as a data source of GRANULEE_USER (with GRANULEE_PASSWORD)
 #
 # Needs a JDK (17 or newer runs Gradle; it fetches the JDK 21 toolchain itself if missing) and
 # Node 22 or newer. Docker only for the ClickHouse targets.
@@ -48,7 +48,7 @@ clickhouse: ## Start a local ClickHouse container to try Granulee on (created on
 seed: clickhouse ## Fill that ClickHouse with a sample schema and a query-log workload (drops and recreates it)
 	dev/seed.sh
 
-source: ## Register that ClickHouse in the running Granulee, if it has no source yet
+source: ## Add that ClickHouse as a data source of GRANULEE_USER, if that user has none yet
 	@dev/add-source.sh
 
 install: ## Install the frontend's packages when they are missing or outdated
@@ -67,6 +67,6 @@ image: ## The container image as granulee:latest in the local Docker daemon
 stop: ## Stop the ClickHouse container (its data stays)
 	-docker stop $(CH_CONTAINER)
 
-clean: ## Remove the ClickHouse container and Granulee's local state (sources, scans, trials)
+clean: ## Remove the ClickHouse container and Granulee's local state (users, sources, scans, trials)
 	-docker rm -f $(CH_CONTAINER)
 	rm -r -f ./backend/data

@@ -22,6 +22,7 @@ data class ApplyRequest(val sql: String = "")
 /**
  * What a finished trial may do to the production table: run the ALTERs that bring it to the candidate's schema,
  * and after that an OPTIMIZE … FINAL so existing parts are rewritten too. A rebuild is only ever shown.
+ * Only the trial's owner gets this far; what was started then finishes without anybody signed in.
  */
 @Component
 class ProductionChanges(
@@ -38,7 +39,7 @@ class ProductionChanges(
     }
 
     private fun completed(id: String): Trial {
-        val trial = trials.get(id)
+        val trial = trials.owned(id)
         if (trial.status != Status.COMPLETED) throw BadRequestException("Only a completed trial can be applied")
         return trial
     }
@@ -59,13 +60,15 @@ class ProductionChanges(
             is Migration.Alter -> m
         }
         if (alter.sql != reviewed) throw BadRequestException("${trial.database}.${trial.table} changed since you opened the review. Review the statements again.")
+        // Looked up here, where the user is known: the statements run after the request is over.
+        val source = sources.find(trial.sourceId)
         val started = trials.update(id) {
             it.copy(apply = TrialApply(Status.RUNNING, Instant.now().toString(), null, null, alter.sql, 0, alter.statements.size))
         }
         workers.execute {
             fun progress(change: (TrialApply) -> TrialApply) = trials.update(id) { it.copy(apply = it.apply?.let(change)) }
             try {
-                val ch = sources.connection(sources.find(trial.sourceId))
+                val ch = sources.connection(source)
                 alter.statements.forEachIndexed { i, statement ->
                     ch.exec(statement, queryId = "granulee-$id-apply-${i + 1}")
                     progress { it.copy(done = i + 1) }
@@ -85,7 +88,7 @@ class ProductionChanges(
      * Only after the candidate has been applied.
      */
     fun optimize(id: String): Trial {
-        val trial = trials.get(id)
+        val trial = trials.owned(id)
         if (trial.apply?.status != Status.COMPLETED) throw BadRequestException("Apply the trial to ${trial.database}.${trial.table} first")
         if (trial.optimize?.status == Status.RUNNING) throw BadRequestException("OPTIMIZE FINAL is already running for trial #$id")
         val source = sources.find(trial.sourceId)

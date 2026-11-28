@@ -11,7 +11,7 @@ import java.time.Duration
 /** When the jar carries the built frontend, client-side routes fall through to index.html. */
 @Controller
 class SpaController {
-    @GetMapping("/explorer/**", "/tables/**", "/recommendations/**", "/trials/**", "/sources")
+    @GetMapping("/explorer/**", "/tables/**", "/recommendations/**", "/trials/**", "/sources", "/users")
     fun spa(): String = "forward:/index.html"
 }
 

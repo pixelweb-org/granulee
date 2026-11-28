@@ -13,10 +13,12 @@ spring:
 server:
   port: 8080
 granulee:
-  # Sources, scan snapshots and trials are kept as JSON files here.
+  # Users, sources, scan snapshots and trials are kept here, in granulee.db.
   data-dir: ${GRANULEE_DATA_DIR:./data}
   # Base64 of 32 random bytes. Empty: a key file is created inside the data dir.
   secret-key: ${GRANULEE_SECRET_KEY:}
+  # A user name: that account gets a new one-time password at start, printed once. Remove it again afterwards.
+  reset-admin: ${GRANULEE_RESET_ADMIN:}
 logging:
   level:
     com.clickhouse: warn

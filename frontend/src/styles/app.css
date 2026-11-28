@@ -35,6 +35,10 @@ input[type="checkbox"] { width: 18px; height: 18px; flex: none; accent-color: va
 .brand svg { flex: none; display: block; }
 .sidebar-source { display: flex; flex-direction: column; gap: 6px; padding: 0 4px; }
 .sidebar-foot { margin-top: auto; }
+.account { display: flex; flex-direction: column; gap: 4px; padding-top: 12px; border-top: 1px solid var(--hairline-soft); }
+/* Sign-in and first-password pages: one card in the middle, on the app's background. */
+.auth { min-height: 100dvh; display: flex; align-items: flex-start; justify-content: center; padding: min(160px, 15vh) 24px 24px; background: linear-gradient(180deg, var(--bg-start) 0%, var(--branco) 480px); color: var(--ink); }
+.auth-card { width: 100%; max-width: 400px; padding: 32px; gap: 20px; }
 .main { flex: 999 1 560px; min-width: 0; padding: 32px 32px 64px; }
 .page { max-width: 1600px; margin: 0 auto; display: flex; flex-direction: column; gap: 32px; }
 @media (max-width: 860px) {

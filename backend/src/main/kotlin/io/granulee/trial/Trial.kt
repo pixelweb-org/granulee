@@ -3,11 +3,11 @@ package io.granulee.trial
 import io.granulee.sql.TrialIndex
 import io.granulee.sql.problem
 
-// A trial as the API shows it and trials.json keeps it. The field names are the contract with both.
+// A trial as the API shows it and the storage keeps it. The field names are the contract with both.
 
 /**
- * How far a trial, one of its steps, or something started from it has got, as the API and trials.json spell it.
- * Kept as text in the classes below: a stored file from any earlier release has to load as it is.
+ * How far a trial, one of its steps, or something started from it has got, as the API and the storage spell it.
+ * Kept as text in the classes below: a trial stored by any earlier release has to load as it is.
  */
 internal object Status {
     const val RUNNING = "running"
@@ -66,6 +66,8 @@ data class LogLine(val at: String, val message: String)
 
 data class Trial(
     val id: String,
+    /** The user who started it. */
+    val ownerId: String,
     val name: String,
     val sourceId: String,
     val sourceName: String,

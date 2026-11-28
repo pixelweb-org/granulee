@@ -1,7 +1,7 @@
 package io.granulee.source
 
 import io.granulee.state.GranuleeProperties
-import io.granulee.state.JsonStore
+import io.granulee.state.DataDir
 import org.springframework.stereotype.Component
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
@@ -11,9 +11,9 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-/** AES-256-GCM for the ClickHouse passwords kept in sources.json. */
+/** AES-256-GCM for the stored ClickHouse passwords. One key for the installation, kept apart from what it locks. */
 @Component
-class PasswordCipher(props: GranuleeProperties, store: JsonStore) {
+class PasswordCipher(props: GranuleeProperties, dataDir: DataDir) {
     private val key: SecretKeySpec
     private val random = SecureRandom()
 
@@ -21,7 +21,7 @@ class PasswordCipher(props: GranuleeProperties, store: JsonStore) {
         val raw = if (props.secretKey.isNotBlank()) {
             Base64.getDecoder().decode(props.secretKey.trim())
         } else {
-            val file = store.dir.resolve("secret.key")
+            val file = dataDir.path.resolve("secret.key")
             if (!Files.exists(file)) {
                 val fresh = ByteArray(32).also { random.nextBytes(it) }
                 Files.writeString(file, Base64.getEncoder().encodeToString(fresh))

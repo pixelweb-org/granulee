@@ -1,5 +1,12 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import { useSources } from '../state/sources';
+import { useAuth } from '../state/auth';
+import { useAction } from '../hooks/useApi';
+import { Dialog } from './Dialog';
+import { Button } from './Button';
+import { PasswordFields, usePasswordForm } from './PasswordForm';
+import { InlineError } from './States';
 import { fmtClock, fmtUntil } from '../lib/format';
 import { routes } from '../lib/routes';
 import type { Source } from '../api/types';
@@ -22,7 +29,7 @@ function scanCaption(sources: Source[]): string {
 }
 
 /** The mark: a dark tile, a white G and one orange granule. */
-function Logo() {
+export function Logo() {
   return (
     <svg aria-hidden="true" width="32" height="32" viewBox="0 0 64 64">
       <rect x="0" y="0" width="64" height="64" rx="9" fill="#232f3e" />
@@ -36,8 +43,11 @@ function Logo() {
 
 export function Layout() {
   const { sources, selectedId, selected, select } = useSources();
+  const { me, signOut } = useAuth();
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const [changingPassword, setChangingPassword] = useState(false);
+  const nav = me?.role === 'admin' ? [...NAV, { to: '/users', label: 'Users', match: (p: string) => p.startsWith('/users') }] : NAV;
 
   function onSource(id: string) {
     select(id || null);
@@ -67,21 +77,82 @@ export function Layout() {
           </select>
         </div>
         <nav className="g-nav" aria-label="Main">
-          {NAV.map((item) => (
+          {nav.map((item) => (
             <Link key={item.to} to={item.to} aria-current={item.match(pathname) ? 'page' : undefined}>
               {item.label}
             </Link>
           ))}
         </nav>
-        <p className="caption muted sidebar-foot" style={{ padding: '0 12px' }}>
-          {scanCaption(selected ? [selected] : sources)}
-        </p>
+        <div className="sidebar-foot stack" style={{ padding: '0 12px', ['--gap' as string]: '12px' }}>
+          <p className="caption muted">{scanCaption(selected ? [selected] : sources)}</p>
+          <div className="account">
+            <p className="body-sm g-wrap" style={{ fontWeight: 700 }}>{me?.username}</p>
+            <div className="row" style={{ ['--gap' as string]: '12px' }}>
+              <button type="button" className="g-link" onClick={() => setChangingPassword(true)}>
+                Change password
+              </button>
+              <button
+                type="button"
+                className="g-link"
+                onClick={() => {
+                  // Whoever signs in next starts at the overview, not on a page that may not be theirs.
+                  navigate('/');
+                  void signOut();
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        </div>
       </aside>
+      {changingPassword ? <ChangePasswordDialog onClose={() => setChangingPassword(false)} /> : null}
       <main className="main">
         <div className="page">
           <Outlet />
         </div>
       </main>
     </div>
+  );
+}
+
+function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
+  const { changePassword } = useAuth();
+  const form = usePasswordForm();
+  const action = useAction();
+
+  async function submit() {
+    if (form.problem) return;
+    if (await action.run(() => changePassword(form.current, form.password))) onClose();
+  }
+
+  return (
+    <Dialog
+      title="Change password"
+      onClose={onClose}
+      actions={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" form="password-form" busy={action.busy} disabled={!form.complete}>
+            Change password
+          </Button>
+        </>
+      }
+    >
+      <form
+        id="password-form"
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        <p className="body-sm muted">Your other sessions are signed out; this one stays.</p>
+        <PasswordFields form={form} />
+        <InlineError message={action.error ?? (form.touched ? form.problem : null)} />
+      </form>
+    </Dialog>
   );
 }

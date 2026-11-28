@@ -1,20 +1,38 @@
 package io.granulee.trial
 
 import io.granulee.NotFoundException
-import io.granulee.state.JsonStore
+import io.granulee.user.CurrentUser
 import org.springframework.stereotype.Component
 import java.security.SecureRandom
 
-data class TrialFile(val trials: List<Trial> = emptyList())
+/** Where the trials are kept. */
+interface TrialStorage {
+    fun all(): List<Trial>
 
-/** The trials, in memory and as trials.json. Every change is written at once: a run reports its progress through here. */
+    /** Stores the trial, in place of the one with its id if there is one. */
+    fun save(trial: Trial)
+
+    fun remove(id: String)
+}
+
+/**
+ * The trials of every user, in memory and in the storage. Every change is stored at once: a run reports its
+ * progress through here. A trial belongs to the user who started it. `mine` and `owned` are what a request uses;
+ * `all`, `get` and the updates are for the run itself, which goes on without anybody signed in.
+ */
 @Component
-class TrialRepository(private val store: JsonStore) {
+class TrialRepository(private val storage: TrialStorage) {
     private val lock = Any()
     private val random = SecureRandom()
-    private var trials: List<Trial> = store.read(FILE, TrialFile::class.java)?.trials ?: emptyList()
+    private var trials: List<Trial> = storage.all()
 
     fun all(): List<Trial> = synchronized(lock) { trials }
+
+    /** The signed-in user's trials. */
+    fun mine(): List<Trial> = CurrentUser.id().let { owner -> all().filter { it.ownerId == owner } }
+
+    /** One of the signed-in user's trials. Somebody else's is as absent as one that does not exist. */
+    fun owned(id: String): Trial = mine().firstOrNull { it.id == id } ?: throw NotFoundException("Trial #$id does not exist")
 
     fun get(id: String): Trial = all().firstOrNull { it.id == id } ?: throw NotFoundException("Trial #$id does not exist")
 
@@ -23,25 +41,25 @@ class TrialRepository(private val store: JsonStore) {
         generateSequence { String.format("%04x", random.nextInt(0x10000)) }.first { candidate -> trials.none { it.id == candidate } }
     }
 
-    fun add(trial: Trial) = synchronized(lock) { save(trials + trial) }
+    fun add(trial: Trial) = synchronized(lock) {
+        storage.save(trial)
+        trials = trials + trial
+    }
 
-    fun remove(id: String) = synchronized(lock) { save(trials.filter { it.id != id }) }
+    fun remove(id: String) = synchronized(lock) {
+        storage.remove(id)
+        trials = trials.filter { it.id != id }
+    }
 
     fun update(id: String, change: (Trial) -> Trial): Trial = synchronized(lock) {
         val current = trials.first { it.id == id }
         val next = change(current)
-        save(trials.map { if (it.id == id) next else it })
+        storage.save(next)
+        trials = trials.map { if (it.id == id) next else it }
         next
     }
 
-    fun updateAll(change: (Trial) -> Trial) = synchronized(lock) { save(trials.map(change)) }
-
-    private fun save(next: List<Trial>) {
-        trials = next
-        store.write(FILE, TrialFile(next))
-    }
-
-    private companion object {
-        const val FILE = "trials.json"
+    fun updateAll(change: (Trial) -> Trial) = synchronized(lock) {
+        trials = trials.map { current -> change(current).also { if (it != current) storage.save(it) } }
     }
 }
